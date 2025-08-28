@@ -13,7 +13,7 @@ from utils import create_compute_metrics
 from schema import TrainingConfig
 
 
-def __build_shared_training_args(
+def _build_shared_training_args(
     trainer_type: str,
     cfg: TrainingConfig,
     job_id: str,
@@ -167,7 +167,7 @@ def __build_shared_training_args(
     return args
 
 
-def __reformat_vision_dataset(example, processor):
+def _reformat_vision_dataset(example, processor):
     """
     Convert vision datasets from complete ChatML format to the format expected by GRPO/DPO trainers.
     This extracts images to a separate column and applies chat template to create prompt strings.
@@ -359,7 +359,9 @@ class HuggingFaceTrainingService(BaseTrainingService):
         model_kwargs = {
             "torch_dtype": self.torch_dtype,
             "device_map": "auto",
-            "attn_implementation": "flash_attention_2" if cfg.use_fa2 else "eager",
+            "attn_implementation": "flash_attention_2"
+            if cfg.hyperparameters.use_fa2
+            else "eager",
         }
 
         # Load the model with proper quantisation if required
@@ -420,13 +422,13 @@ class HuggingFaceTrainingService(BaseTrainingService):
             # Convert vision datasets to the format expected by GRPO/DPO trainers and they will handle processing
             # NOTE: do not use batching here since it will make each column a list and break the format function
             train_ds = train_ds.map(
-                lambda example: __reformat_vision_dataset(
+                lambda example: _reformat_vision_dataset(
                     example, tokenizer_or_processor
                 )
             )
             if eval_ds is not None:
                 eval_ds = eval_ds.map(
-                    lambda example: __reformat_vision_dataset(
+                    lambda example: _reformat_vision_dataset(
                         example, tokenizer_or_processor
                     )
                 )
@@ -442,7 +444,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
                 bias="none",
                 target_modules="all-linear",
                 task_type="CAUSAL_LM",
-                modules_to_save=["lm_head", "embed_tokens"],
+                # modules_to_save=["lm_head", "embed_tokens"],
             )
 
             # NOTE: This can be easily extended to support PEFT other than LoRA
@@ -478,7 +480,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
         }
 
         # Get complete configured training arguments
-        return __build_shared_training_args(
+        return _build_shared_training_args(
             trainer_type, cfg, job_id, report_to, provider_specific_args, config_classes
         )
 
@@ -531,7 +533,9 @@ class HuggingFaceTrainingService(BaseTrainingService):
 
     def _create_vision_collate_fn(self, processor):
         """
-        Create vision collate function for HuggingFace vision training.
+        Create vision collate function for HuggingFace SFT vision training.
+        This ONLY works with SFTTrainer dataset type because GRPO and DPO do not use data collator.
+        They require a pre-formatted dataset and handles vision processing internally.
         NOTE: There is no built in hugging face vision collator unlike Unsloth
         """
         from PIL import Image
@@ -543,30 +547,9 @@ class HuggingFaceTrainingService(BaseTrainingService):
             2. Extract images from type:image fields and apply them to processors in the correct order
             3. Do some postprocessing on the tokens and labels and return the batch with text and images
             """
-
-            # Handle different dataset types
-            # NOTE: This technically works but GRPOTrainer does not support data collator
-            def get_messages_for_template(example):
-                if "messages" in example:
-                    # Language modeling format
-                    return example["messages"]
-                elif "prompt" in example:
-                    if "chosen" in example and "rejected" in example:
-                        # Preference format - for DPO we need prompt + chosen + rejected
-                        return (
-                            example["prompt"] + example["chosen"] + example["rejected"]
-                        )
-                    else:
-                        # Prompt-only format
-                        return example["prompt"]
-                else:
-                    raise ValueError(
-                        "Example must contain 'messages' or 'prompt' field"
-                    )
-
             texts = [
                 processor.apply_chat_template(
-                    get_messages_for_template(example),
+                    example["messages"],
                     tokenize=True,
                     add_generation_prompt=False,
                 ).strip()
@@ -600,7 +583,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
                 return images
 
             images = [
-                extract_images_from_messages(get_messages_for_template(example))
+                extract_images_from_messages(example["messages"])
                 for example in examples
             ]
 
@@ -735,7 +718,7 @@ class UnslothTrainingService(BaseTrainingService):
             model, tokenizer = self.FastModel.from_pretrained(
                 base_model_id,
                 load_in_4bit=True,
-                max_seq_length=cfg.max_seq_length,
+                max_seq_length=cfg.hyperparameters.max_seq_length,
                 full_finetuning=True if cfg.method == "Full" else False,
             )
             # Setup chat template for text models
@@ -751,7 +734,8 @@ class UnslothTrainingService(BaseTrainingService):
         trainer_type: str,
     ) -> Tuple[Dataset, Dataset]:
         # Unsloth standardization for text; vision uses raw datasets
-        if modality == "text":
+        # We only need to do this for SFT since GRPO/DPO use custom format functions
+        if modality == "text" and trainer_type == "sft":
             train_ds = self._prepare_unsloth_text_dataset(
                 train_ds, tokenizer_or_processor
             )
@@ -760,17 +744,16 @@ class UnslothTrainingService(BaseTrainingService):
                 if eval_ds is not None
                 else None
             )
-
+        # Convert vision datasets to the format expected by GRPO/DPO trainers
         elif modality == "vision" and trainer_type in ["dpo", "grpo"]:
-            # Convert vision datasets to the format expected by GRPO/DPO trainers
             train_ds = train_ds.map(
-                lambda example: __reformat_vision_dataset(
+                lambda example: _reformat_vision_dataset(
                     example, tokenizer_or_processor
                 )
             )
             if eval_ds is not None:
                 eval_ds = eval_ds.map(
-                    lambda example: __reformat_vision_dataset(
+                    lambda example: _reformat_vision_dataset(
                         example, tokenizer_or_processor
                     )
                 )
@@ -842,7 +825,7 @@ class UnslothTrainingService(BaseTrainingService):
         }
 
         # Get complete configured training arguments
-        return __build_shared_training_args(
+        return _build_shared_training_args(
             trainer_type, cfg, job_id, report_to, provider_specific_args, config_classes
         )
 
@@ -862,9 +845,7 @@ class UnslothTrainingService(BaseTrainingService):
             "args": args,
             "train_dataset": train_ds,
             "eval_dataset": eval_ds,
-            "processing_class": tokenizer_or_processor
-            if cfg.modality == "text"
-            else tokenizer_or_processor.tokenizer,  # for AutoProcessor
+            "processing_class": tokenizer_or_processor,
         }
 
         if trainer_type == "sft":
@@ -934,42 +915,10 @@ class UnslothTrainingService(BaseTrainingService):
                     for convo in convos
                 ]
                 return {"text": texts}
-
-            elif "prompt" in examples:
-                # Check if it's preference format (has chosen/rejected)
-                if "chosen" in examples and "rejected" in examples:
-                    # Preference format - combine prompt + chosen + rejected for DPO
-                    prompts = examples["prompt"]
-                    chosen = examples["chosen"]
-                    rejected = examples["rejected"]
-
-                    texts = []
-                    for prompt, chosen_response, rejected_response in zip(
-                        prompts, chosen, rejected
-                    ):
-                        # Combine prompt + chosen + rejected into one conversation
-                        combined_messages = prompt + chosen_response + rejected_response
-                        text = tokenizer.apply_chat_template(
-                            combined_messages,
-                            tokenize=False,
-                            add_generation_prompt=False,
-                        ).removeprefix("<bos>")
-                        texts.append(text)
-
-                    return {"text": texts}
-                else:
-                    # Prompt-only format - just use the prompt
-                    prompts = examples["prompt"]
-                    texts = [
-                        tokenizer.apply_chat_template(
-                            prompt, tokenize=False, add_generation_prompt=False
-                        ).removeprefix("<bos>")
-                        for prompt in prompts
-                    ]
-                    return {"text": texts}
-
             else:
-                raise ValueError("Dataset must contain 'messages' or 'prompt' field")
+                raise ValueError(
+                    "Dataset does not contain messages field, do not use it with SFTTrainer"
+                )
 
         dataset = dataset.map(formatting_prompts_func, batched=True)
         return dataset
