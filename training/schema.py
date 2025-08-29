@@ -1,6 +1,35 @@
 from pydantic import BaseModel, field_validator
 from typing import Literal, Optional, List
 
+# Define the available built-in reward functions for validation and auto-completion
+RewardFunctionName = Literal[
+    "think_format",
+    "expression_accuracy",
+    "numerical_accuracy",
+    "correctness",
+    "is_integer",
+    "strict_format",
+    "soft_format",
+    "xml_count",
+]
+
+
+class RewardConfig(BaseModel):
+    """
+    Configures the reward functions to be used during training.
+    Allows combining multiple weighted reward functions.
+    """
+
+    functions: List[RewardFunctionName]
+
+    @field_validator("functions")
+    @classmethod
+    def no_duplicate_functions(cls, v: List[RewardFunctionName]):
+        """Ensures that each reward function is only specified once."""
+        if len(v) != len(set(v)):
+            raise ValueError("Duplicate reward function names are not allowed.")
+        return v
+
 
 class HyperparameterConfig(BaseModel):
     """Training hyperparameters configuration"""
@@ -84,6 +113,9 @@ class TrainingConfig(BaseModel):
     # Optional configurations
     eval_config: Optional[EvaluationConfig] = None
     wandb_config: Optional[WandbConfig] = None
+
+    # GRPO-specific reward config
+    reward_config: Optional[RewardConfig] = None
 
     @field_validator("trainer_type")
     @classmethod

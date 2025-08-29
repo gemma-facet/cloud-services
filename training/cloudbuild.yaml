@@ -43,5 +43,3 @@ substitutions:
 
 options:
   machineType: "E2_HIGHCPU_32"
-
-timeout: "2400s"
