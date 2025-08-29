@@ -187,15 +187,13 @@ def _reformat_vision_dataset(example, processor):
     # Use the tokenizer directly for Unsloth (processor.tokenizer for AutoProcessor)
     tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
-    def extract_images_and_create_text_only_messages(messages):
-        """Extract images and create text-only version of messages for chat template"""
+    def extract_images(messages):
+        """Extract images from messages for chat template"""
         images = []
-        text_only_messages = []
 
         for msg in messages:
             content = msg.get("content", [])
             if isinstance(content, list):
-                text_items = []
                 for item in content:
                     if isinstance(item, dict):
                         if item.get("type") == "image":
@@ -210,19 +208,8 @@ def _reformat_vision_dataset(example, processor):
                                     if isinstance(image_bytes, (bytes, bytearray)):
                                         pil_image = Image.open(io.BytesIO(image_bytes))
                                         images.append(pil_image.convert("RGB"))
-                        elif item.get("type") == "text":
-                            text_items.append(item.get("text", ""))
 
-                # Combine all text items for this message
-                if text_items:
-                    text_only_messages.append(
-                        {"role": msg["role"], "content": " ".join(text_items)}
-                    )
-            else:
-                # Handle backward compatibility - content is a string
-                text_only_messages.append({"role": msg["role"], "content": content})
-
-        return images, text_only_messages
+        return images
 
     result = {}
 
@@ -230,41 +217,30 @@ def _reformat_vision_dataset(example, processor):
     if "prompt" in example and "chosen" in example and "rejected" in example:
         # Preference format (DPO)
         prompt_messages = example["prompt"]
-        images, text_only_prompt = extract_images_and_create_text_only_messages(
-            prompt_messages
-        )
-
-        # Create full conversations for chosen and rejected
-        chosen_conversation = text_only_prompt + example["chosen"]
-        rejected_conversation = text_only_prompt + example["rejected"]
-
-        # Apply chat template to each
+        images = extract_images(prompt_messages)
         result["prompt"] = tokenizer.apply_chat_template(
-            text_only_prompt, add_generation_prompt=True, tokenize=False
+            prompt_messages, add_generation_prompt=True, tokenize=False
         )
-        result["chosen"] = tokenizer.apply_chat_template(
-            chosen_conversation, add_generation_prompt=False, tokenize=False
-        )
-        result["rejected"] = tokenizer.apply_chat_template(
-            rejected_conversation, add_generation_prompt=False, tokenize=False
-        )
-
         if images:
             result["image"] = images[0]  # DPO typically uses single image
+
+        # These assistant messages are text only
+        result["chosen"] = tokenizer.apply_chat_template(
+            example["chosen"], add_generation_prompt=False, tokenize=False
+        )
+        result["rejected"] = tokenizer.apply_chat_template(
+            example["rejected"], add_generation_prompt=False, tokenize=False
+        )
 
     elif "prompt" in example:
         # Prompt-only format (GRPO)
         prompt_messages = example["prompt"]
-        images, text_only_prompt = extract_images_and_create_text_only_messages(
-            prompt_messages
-        )
+        images = extract_images(prompt_messages)
 
-        # Apply chat template to create prompt string
-        prompt_text = tokenizer.apply_chat_template(
-            text_only_prompt, add_generation_prompt=True, tokenize=False
+        # Apply chat template, this includes both type text and image
+        result["prompt"] = tokenizer.apply_chat_template(
+            prompt_messages, add_generation_prompt=True, tokenize=False
         )
-
-        result["prompt"] = prompt_text
         if images:
             result["image"] = images[0]  # GRPO typically uses single image
 
@@ -879,6 +855,7 @@ class UnslothTrainingService(BaseTrainingService):
         elif trainer_type == "grpo":
             # GRPO requires reward functions and processing_class
             reward_funcs = load_reward_functions_from_config(cfg.reward_config)
+            logging.info(f"Loaded {len(reward_funcs)} reward functions")
             return self.GRPOTrainer(
                 **base_trainer_args,
                 reward_funcs=reward_funcs,

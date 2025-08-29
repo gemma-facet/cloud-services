@@ -151,5 +151,5 @@ class BaseTrainingService(ABC):
             tags=["fine-tuning"],
         )
 
-        wandb_url = wandb.run.get_url() if wandb.run else ""
+        wandb_url = wandb.run.url if wandb.run else ""
         return "wandb", wandb_url

@@ -2,10 +2,34 @@ from pydantic import BaseModel, field_validator
 from typing import Literal, Optional, List
 
 
-class RewardConfig(BaseModel):
-    """Will be extended to support more"""
+# Define the available built-in reward functions for validation and auto-completion
+RewardFunctionName = Literal[
+    "think_format",
+    "expression_accuracy",
+    "numerical_accuracy",
+    "correctness",
+    "is_integer",
+    "strict_format",
+    "soft_format",
+    "xml_count",
+]
 
-    built_in_func: List[str]  # format, accuracy are built-in
+
+class RewardConfig(BaseModel):
+    """
+    Configures the reward functions to be used during training.
+    Allows combining multiple weighted reward functions.
+    """
+
+    functions: List[RewardFunctionName]
+
+    @field_validator("functions")
+    @classmethod
+    def no_duplicate_functions(cls, v: List[RewardFunctionName]):
+        """Ensures that each reward function is only specified once."""
+        if len(v) != len(set(v)):
+            raise ValueError("Duplicate reward function names are not allowed.")
+        return v
 
 
 class HyperparameterConfig(BaseModel):
@@ -36,7 +60,7 @@ class HyperparameterConfig(BaseModel):
     max_length: Optional[int] = 1024  # Max length for DPO
 
     # GRPO-specific hyperparameters (some are shard with DPO)
-    num_generations: Optional[int] = 4  # Number of generations for GRPO
+    num_generations: Optional[int] = 2  # Number of generations for GRPO
     max_grad_norm: Optional[float] = 0.1  # Gradient clipping for GRPO
     adam_beta1: Optional[float] = 0.9  # Adam beta1 for GRPO
     adam_beta2: Optional[float] = 0.99  # Adam beta2 for GRPO

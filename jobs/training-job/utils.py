@@ -1,6 +1,5 @@
 import logging
 import torch
-from transformers import EvalPrediction
 from typing import Callable, Tuple, Any
 from storage import StorageStrategyFactory, CloudStoredModelMetadata
 from job_manager import JobTracker
@@ -261,7 +260,7 @@ def create_compute_metrics(
     if not compute_eval_metrics:
         return None
 
-    def compute_metrics(eval_pred: EvalPrediction) -> dict:
+    def compute_metrics(eval_pred) -> dict:
         """
         Compute evaluation metrics manually (regular mode).
         """
@@ -314,9 +313,7 @@ def create_compute_metrics(
         "batch_count": 0,
     }
 
-    def compute_metrics_batched(
-        eval_pred: EvalPrediction, compute_result: bool = True
-    ) -> dict:
+    def compute_metrics_batched(eval_pred, compute_result: bool = True) -> dict:
         """
         Compute evaluation metrics in batch mode.
         NOTE: If we ever use evaluate library in the future, the class of metric has an `add_batch`
