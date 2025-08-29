@@ -1,34 +1,163 @@
-from pydantic import BaseModel, field_validator
-from typing import Literal, Optional, List
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal, Optional, List, Union
 
-# Define the available built-in reward functions for validation and auto-completion
-RewardFunctionName = Literal[
-    "think_format",
-    "expression_accuracy",
-    "numerical_accuracy",
-    "correctness",
-    "is_integer",
-    "strict_format",
-    "soft_format",
-    "xml_count",
+
+class StringCheckRewardConfig(BaseModel):
+    """Config for checking if a string matches a reference."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["string_check"] = "string_check"
+    reference_field: str = Field(
+        ...,
+        description="Field in the dataset for the reference string to check against.",
+    )
+    operation: Literal["eq", "ne", "like", "ilike"] = Field(
+        ..., description="The string comparison operation to perform."
+    )
+
+
+class TextSimilarityRewardConfig(BaseModel):
+    """Config for calculating reward based on text similarity."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["text_similarity"] = "text_similarity"
+    gemini_api_key: Optional[str] = Field(
+        None,
+        description="Optional Gemini API key. If not provided, it will fall back to the GOOGLE_API_KEY environment variable.",
+    )
+    reference_field: str = Field(
+        ...,
+        description="Field in the dataset for the reference string for similarity comparison.",
+    )
+    evaluation_metric: Literal[
+        "fuzzy_match",
+        "bleu",
+        "gleu",
+        "meteor",
+        "cosine",
+        "rouge_1",
+        "rouge_2",
+        "rouge_3",
+        "rouge_4",
+        "rouge_5",
+        "rouge_l",
+    ]
+    embedding_model: Optional[str] = Field(
+        "models/embedding-001",
+        description="The Google AI model for embeddings, required for the 'cosine' metric.",
+    )
+
+
+class ScoreModelRewardConfig(BaseModel):
+    """Config for using an LLM to score a response numerically."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["score_model"] = "score_model"
+    gemini_api_key: Optional[str] = Field(
+        None,
+        description="Optional Gemini API key. If not provided, it will fall back to the GOOGLE_API_KEY environment variable.",
+    )
+    model: str = Field(
+        "gemini-2.0-flash", description="The Gemini model to use as the judge."
+    )
+    prompt: str = Field(
+        ...,
+        description="The prompt/instruction for the judge model, with template support.",
+    )
+    range: Optional[List[float]] = Field(
+        None, description="The output score will be clipped to this [min, max] range."
+    )
+
+
+class LabelModelRewardConfig(BaseModel):
+    """Config for using an LLM to classify a response with a label."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["label_model"] = "label_model"
+    gemini_api_key: Optional[str] = Field(
+        None,
+        description="Optional Gemini API key. If not provided, it will fall back to the GOOGLE_API_KEY environment variable.",
+    )
+    model: str = Field(
+        "gemini-2.0-flash", description="The Gemini model to use as the judge."
+    )
+    prompt: str = Field(
+        ...,
+        description="The prompt/instruction for the judge model, with template support.",
+    )
+    labels: List[str] = Field(
+        ..., description="The set of all possible labels the judge can output."
+    )
+    passing_labels: List[str] = Field(
+        ...,
+        description="The subset of labels that correspond to a positive (1.0) reward.",
+    )
+
+
+class PythonRewardConfig(BaseModel):
+    """Config for executing custom Python code as a reward function."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["python"] = "python"
+    source: str = Field(
+        ...,
+        description="A string containing the Python source code for the grader. Must contain a 'grade' function.",
+    )
+
+
+class BuiltInRewardParameters(BaseModel):
+    """Parameters for built-in reward functions."""
+
+    think_tag: Optional[str] = "think"
+    answer_tag: Optional[str] = "answer"
+
+
+class BuiltInRewardConfig(BaseModel):
+    """Config for using a classic, built-in reward function."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["built_in"] = "built_in"
+    function_name: Literal[
+        "think_format",
+        "expression_accuracy",
+        "numerical_accuracy",
+        "correctness",
+        "is_integer",
+        "strict_format",
+        "soft_format",
+        "xml_count",
+    ] = Field(..., description="The name of the built-in, batch-based reward function.")
+    parameters: Optional[BuiltInRewardParameters] = Field(
+        None, description="Optional parameters for the built-in function."
+    )
+
+
+class RulerRewardConfig(BaseModel):
+    """Config for using the RULER model-based grader."""
+
+    name: str = Field(..., description="Unique name for this reward function instance.")
+    type: Literal["ruler"] = "ruler"
+    gemini_api_key: Optional[str] = Field(
+        None,
+        description="Optional Gemini API key. If not provided, it will fall back to the GOOGLE_API_KEY environment variable.",
+    )
+    model: str = Field(
+        "gemini-2.0-flash", description="The Gemini model to use as the judge."
+    )
+    rules: List[str] = Field(
+        ..., description="A list of rules or principles for the judge to follow."
+    )
+
+
+AnyGraderConfig = Union[
+    StringCheckRewardConfig,
+    TextSimilarityRewardConfig,
+    ScoreModelRewardConfig,
+    LabelModelRewardConfig,
+    PythonRewardConfig,
+    BuiltInRewardConfig,
+    RulerRewardConfig,
 ]
-
-
-class RewardConfig(BaseModel):
-    """
-    Configures the reward functions to be used during training.
-    Allows combining multiple weighted reward functions.
-    """
-
-    functions: List[RewardFunctionName]
-
-    @field_validator("functions")
-    @classmethod
-    def no_duplicate_functions(cls, v: List[RewardFunctionName]):
-        """Ensures that each reward function is only specified once."""
-        if len(v) != len(set(v)):
-            raise ValueError("Duplicate reward function names are not allowed.")
-        return v
 
 
 class HyperparameterConfig(BaseModel):
@@ -115,7 +244,7 @@ class TrainingConfig(BaseModel):
     wandb_config: Optional[WandbConfig] = None
 
     # GRPO-specific reward config
-    reward_config: Optional[RewardConfig] = None
+    reward_config: Optional[List[AnyGraderConfig]] = None
 
     @field_validator("trainer_type")
     @classmethod
