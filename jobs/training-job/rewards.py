@@ -1,130 +1,59 @@
-"""
-Built-in reward functions are sourced from: https://github.com/huggingface/open-r1/blob/main/src/open_r1/rewards.py
-Credits to the creators at hugging face and perhaps DeepSeek team, referenced the HF OpenSource AI Cookbook
-
-The overall rewards design took inspiration from: https://platform.openai.com/docs/guides/graders
-We followed the OpenAI RFL graders fine tuning design to support a wide-varity of reward config.
-
-# System prompt that instructs the model to use a specific XML format.
-SYSTEM_PROMPT = \"""
-Respond in the following format:
-<reasoning>
-...
-</reasoning>
-<answer>
-...
-</answer>
-\"""
-
-# XML chain-of-thought format template.
-XML_COT_FORMAT = \"""
-<reasoning>
-{reasoning}
-</reasoning>
-<answer>
-{answer}
-</answer>
-\"""
-
-# thinking format template.
-THINK_FORMAT = \"""
-<think>
-{reasoning}
-</think>
-
-Each reward function will be called with the following kwargs:
-prompts, completions, completions_ids, trainer_state, **dataset_columns
-
-Your dataset should contain either a solutions column or an answers column (for now you cannot specify a custom column name and auto-detect)
-1. If it is a solutions column, you should use the "expression_accuracy" or "numerical_accuracy" reward function because they extract the final answer based on tags
-2. If it is an answers column, you should use the "correctness" reward function because it does a direct string match
-3. For format matching you may use all other functions (not customizable for now, either thinking or reasoning XML tags)
-4. You may also use LLM-as-judge
-
-Generally you would do the following combination:
-1. Always use a format reward based on what format you are specifying in the system prompt / dataset (customizable in the future)
-2. Optionally use a text similarty sort of reward if you have the reasoning process
-3. Always check the final answer using a verifier (expression_accuracy, numerical_accuracy, correctness, etc) requires extracting from both
-4. Optionally, or ONLY, use LLM-as-judge directly (score and label model)
-
-In the future, we will support bringing in your custom Python reward function code!
-"""
-
 import re
 import logging
-from typing import Callable, Dict, List, Optional
-from schema import RewardConfig
+import os
+import numpy as np
+from typing import List, Dict, Any, Callable, Optional
+from functools import partial
+from google import genai
+from rouge_score import rouge_scorer
+from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.gleu_score import sentence_gleu
+from nltk.translate.meteor_score import single_meteor_score
+from pydantic import BaseModel
+from schema import (
+    AnyGraderConfig,
+    StringCheckRewardConfig,
+    TextSimilarityRewardConfig,
+    ScoreModelRewardConfig,
+    LabelModelRewardConfig,
+    PythonRewardConfig,
+    BuiltInRewardConfig,
+    RulerRewardConfig,
+)
 
 
-# Helper function used by multiple rewards
-def extract_xml_answer(text: str) -> str:
-    """Extracts content from the first <answer> tag."""
-    if "<answer>" not in text:
+# --- Built-in Reward Functions ---
+# These functions requires the system prompt to instruct the model to output in a certain format
+# This is usually a XML based format with <reasoning> and <answer> tags
+# You should provide these tags in the configurations so we can adapt to parse them properly
+# If you require other use case, please consider Graders instead of Reward Functions
+
+
+def extract_xml_answer(text: str, answer_tag: str = "answer") -> str:
+    """Extracts content from the first specified tag in a string."""
+    start_tag = f"<{answer_tag}>"
+    end_tag = f"</{answer_tag}>"
+    if start_tag not in text:
         return text
-    # Split by the start tag and take the last part
-    after_start_tag = text.split("<answer>", 1)[-1]
-    # Split by the end tag and take the first part
-    if "</answer>" not in after_start_tag:
+    after_start_tag = text.split(start_tag, 1)[-1]
+    if end_tag not in after_start_tag:
         return after_start_tag
-    return after_start_tag.split("</answer>", 1)[0].strip()
+    return after_start_tag.split(end_tag, 1)[0].strip()
 
 
-def extract_hash_answer(text: str) -> str:
-    """Extracts content after the '####' delimiter, or returns the whole string."""
+def extract_answer_from_dataset(text: str) -> str:
+    """Extracts content after the '####' delimiter."""
     if "####" in text:
         return text.split("####", 1)[-1].strip()
+    if "<answer>" in text:
+        return extract_xml_answer(text, answer_tag="answer")
     return text.strip()
 
 
-def think_format_reward(
-    completions: List[List[Dict[str, str]]], **kwargs
-) -> List[float]:
-    """
-    Format Enforcement: Ensures that the generation follows a specific format
-    using <think> </think> <answer> </answer> tags for reasoning.
-
-    Args:
-        completions: List of completion messages for each example
-        **kwargs: Additional arguments (unused)
-
-    Returns:
-        List of rewards (1.0 if format correct, 0.0 otherwise)
-    """
-    pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
-    rewards = []
-
-    for completion in completions:
-        # Extract text content from completion
-        if isinstance(completion, list) and len(completion) > 0:
-            content = completion[0].get("content", "")
-        else:
-            content = str(completion)
-
-        # Check if content matches the required format
-        match = re.match(pattern, content.strip(), re.DOTALL | re.MULTILINE)
-        rewards.append(1.0 if match else 0.0)
-
-    return rewards
-
-
 def expression_accuracy_reward(
-    completions: List[List[Dict[str, str]]], solution: List[str], **kwargs
+    completions: List[str], solution: List[str], **kwargs
 ) -> List[Optional[float]]:
-    """
-    Solution Accuracy: Verifies whether the solution to the problem is correct,
-    comparing it to the solution column in the dataset.
-
-    Uses math verification for mathematical expressions when available,
-    falls back to normalized text comparison.
-
-    Args:
-        completions: List of completion messages for each example
-        solution: List of ground truth solutions from dataset
-        **kwargs: Additional arguments (unused)
-
-    Returns:
-        List of rewards (1.0 if correct, 0.0 if incorrect, None if verification failed)
-    """
+    """Verifies mathematical expressions against a solution."""
     try:
         from math_verify import LatexExtractionConfig, parse, verify
         from latex2sympy2_extended import NormalizationConfig
@@ -137,94 +66,54 @@ def expression_accuracy_reward(
         math_verify_available = False
 
     rewards = []
-
     for completion, sol in zip(completions, solution):
+        reward = None
         try:
-            # Extract content from completion
-            if isinstance(completion, list) and len(completion) > 0:
-                content = completion[0].get("content", "")
-            else:
-                content = str(completion)
-
             if math_verify_available:
-                # Try parsing ground truth
-                try:
-                    gold_parsed = parse(sol, extraction_mode="first_match")
-                except Exception:
-                    gold_parsed = []
-
-                if len(gold_parsed) != 0:
-                    # Try parsing predicted answer with robust config
-                    try:
-                        answer_parsed = parse(
-                            content,
-                            extraction_config=[
-                                LatexExtractionConfig(
-                                    normalization_config=NormalizationConfig(
-                                        nits=False,
-                                        malformed_operators=False,
-                                        basic_latex=True,
-                                        boxed="all",
-                                        units=True,
-                                    ),
-                                    boxed_match_priority=0,
-                                    try_extract_without_anchor=False,
-                                )
-                            ],
-                            extraction_mode="first_match",
-                        )
-                        reward = float(verify(gold_parsed, answer_parsed))
-                    except Exception as e:
-                        logging.debug(
-                            f"Math verification failed: {e}, falling back to text comparison"
-                        )
-                        reward = None
+                gold_parsed = parse(sol, extraction_mode="first_match") if sol else []
+                if gold_parsed:
+                    answer_parsed = parse(
+                        completion,
+                        extraction_config=[
+                            LatexExtractionConfig(
+                                normalization_config=NormalizationConfig(
+                                    nits=False,
+                                    malformed_operators=False,
+                                    basic_latex=True,
+                                    boxed="all",
+                                    units=True,
+                                ),
+                                boxed_match_priority=0,
+                                try_extract_without_anchor=False,
+                            )
+                        ],
+                        extraction_mode="first_match",
+                    )
+                    reward = float(verify(gold_parsed, answer_parsed))
                 else:
-                    # Fallback to text match
-                    reward = float(content.strip().lower() == sol.strip().lower())
+                    reward = float(completion.strip().lower() == sol.strip().lower())
             else:
-                # Simple text comparison fallback
-                reward = float(content.strip().lower() == sol.strip().lower())
-
+                reward = float(completion.strip().lower() == sol.strip().lower())
         except Exception as e:
-            logging.warning(f"Error in accuracy reward calculation: {e}")
-            reward = None
-
+            logging.debug(
+                f"Math verification failed for completion '{completion}': {e}"
+            )
         rewards.append(reward)
-
     return rewards
 
 
 def numerical_accuracy_reward(
-    completions: List[List[Dict[str, str]]], solution: List[str], **kwargs
+    completions: List[str], solution: List[str], answer_tag: str = "answer", **kwargs
 ) -> List[Optional[float]]:
-    """
-    Numerical Accuracy: Verifies whether the numerical answer in a completion is correct.
-
-    This function is designed for formats where the answer is clearly delimited,
-    such as mathematical reasoning problems (e.g., GSM8K). It expects the model's
-    completion to be in an XML format with <answer> tags, and the ground-truth
-    solution to have the final answer after a '####' delimiter.
-
-    Args:
-        completions: List of completion messages for each example.
-        solution: List of ground truth solutions from the dataset.
-        **kwargs: Additional arguments (unused).
-
-    Returns:
-        List of rewards (1.0 if correct, 0.0 if incorrect).
-    """
+    """Verifies a numerical answer."""
 
     def _normalize_and_compare(model_ans: str, gt_ans: str) -> bool:
-        """Normalize numerical strings and compare them."""
-        # Basic normalization
-        model_ans_norm = model_ans.strip().replace(",", "")
-        gt_ans_norm = gt_ans.strip().replace(",", "")
-
+        model_ans_norm, gt_ans_norm = (
+            model_ans.strip().replace(",", ""),
+            gt_ans.strip().replace(",", ""),
+        )
         if model_ans_norm == gt_ans_norm:
             return True
-
-        # Try float comparison for cases like '500.0' vs '500'
         try:
             return float(model_ans_norm) == float(gt_ans_norm)
         except (ValueError, TypeError):
@@ -233,126 +122,476 @@ def numerical_accuracy_reward(
     rewards = []
     for completion, sol in zip(completions, solution):
         try:
-            # Extract model's answer from the XML format
-            if isinstance(completion, list) and len(completion) > 0:
-                content = completion[0].get("content", "")
-            else:
-                content = str(completion)
-            model_answer = extract_xml_answer(content)
-
-            # Extract ground truth answer from the '####' format
-            gt_answer = extract_hash_answer(sol)
-
-            # Compare and assign reward
-            reward = float(_normalize_and_compare(model_answer, gt_answer))
-        except Exception as e:
-            logging.warning(f"Error in numerical accuracy reward calculation: {e}")
-            reward = (
-                0.0  # Assign 0 reward if any error occurs during extraction/comparison
+            model_answer, gt_answer = (
+                extract_xml_answer(completion, answer_tag=answer_tag),
+                extract_answer_from_dataset(sol),
             )
-
-        rewards.append(reward)
-
+            rewards.append(float(_normalize_and_compare(model_answer, gt_answer)))
+        except Exception as e:
+            logging.warning(f"Error in numerical accuracy reward: {e}")
+            rewards.append(0.0)
     return rewards
 
 
-# Reward function to check correctness: compares the extracted answer from the response with the known answer.
-def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
-    responses = [completion[0]["content"] for completion in completions]
-    q = prompts[0][-1]["content"]
-    extracted_responses = [extract_xml_answer(r) for r in responses]
-    print(
-        "-" * 20,
-        f"Question:\n{q}",
-        f"\nAnswer:\n{answer[0]}",
-        f"\nResponse:\n{responses[0]}",
-        f"\nExtracted:\n{extracted_responses[0]}",
+def format_reward_func(
+    completions, think_tag="reasoning", answer_tag="answer", **kwargs
+) -> list[float]:
+    pattern = (
+        rf"^<{think_tag}>\n.*?\n</{think_tag}>\n<{answer_tag}>\n.*?\n</{answer_tag}>\n$"
     )
-    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
-
-
-# Reward function that checks if the response is a digit.
-def int_reward_func(completions, **kwargs) -> list[float]:
-    responses = [completion[0]["content"] for completion in completions]
-    extracted_responses = [extract_xml_answer(r) for r in responses]
-    return [0.5 if r.isdigit() else 0.0 for r in extracted_responses]
-
-
-# Reward function that checks if the response strictly follows the desired XML format.
-def strict_format_reward_func(completions, **kwargs) -> list[float]:
-    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
     responses = [completion[0]["content"] for completion in completions]
     matches = [re.match(pattern, r) for r in responses]
     return [0.5 if match else 0.0 for match in matches]
 
 
-# Reward function with a softer check for the XML format.
-def soft_format_reward_func(completions, **kwargs) -> list[float]:
-    # pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
-    responses = [completion[0]["content"] for completion in completions]
-    # matches = [re.match(pattern, r) for r in responses]
-    return [0.5 if match else 0.0 for match in responses]
-
-
 # Function to count specific XML tokens and award a small reward for each.
-def count_xml(text) -> float:
+def count_xml(text, think_tag="reasoning", answer_tag="answer") -> float:
     count = 0.0
-    if text.count("<reasoning>\n") == 1:
+    if text.count(f"<{think_tag}>\n") == 1:
         count += 0.125
-    if text.count("\n</reasoning>\n") == 1:
+    if text.count(f"\n</{think_tag}>\n") == 1:
         count += 0.125
-    if text.count("\n<answer>\n") == 1:
+    if text.count(f"\n<{answer_tag}>\n") == 1:
         count += 0.125
-        count -= len(text.split("\n</answer>\n")[-1]) * 0.001
-    if text.count("\n</answer>") == 1:
+        count -= len(text.split(f"\n</{answer_tag}>\n")[-1]) * 0.001
+    if text.count(f"\n</{answer_tag}>") == 1:
         count += 0.125
-        count -= (len(text.split("\n</answer>")[-1]) - 1) * 0.001
+        count -= (len(text.split(f"\n</{answer_tag}>")[-1]) - 1) * 0.001
     return count
 
 
-# Reward function that uses the XML token count.
-def xmlcount_reward_func(completions, **kwargs) -> list[float]:
-    contents = [completion[0]["content"] for completion in completions]
-    return [count_xml(c) for c in contents]
-
-
-# Registry of available reward functions
 BUILT_IN_REWARDS = {
-    "think_format": think_format_reward,
+    "format_reward": format_reward_func,
+    "count_xml": count_xml,
     "expression_accuracy": expression_accuracy_reward,
     "numerical_accuracy": numerical_accuracy_reward,
-    "correctness": correctness_reward_func,
-    "is_integer": int_reward_func,
-    "strict_format": strict_format_reward_func,
-    "soft_format": soft_format_reward_func,
-    "xml_count": xmlcount_reward_func,
 }
 
 
-def load_reward_functions_from_config(reward_config: RewardConfig) -> List[Callable]:
-    """
-    Load reward functions from configuration.
+# -- Grader reward functions and helpers --
+# These are graders adapted from the OpenAI Fine tuning platform Graders design
+# You should use LLM based graders if possible
 
-    Args:
-        reward_config: List of reward function specifications with 'name' field
+_genai_client = None
 
-    Returns:
-        List of callable reward functions
+
+def _ensure_genai_configured(api_key: Optional[str] = None):
+    """Checks if the Gemini API is configured and configures it if not."""
+    global _genai_client
+    if _genai_client:
+        return
+
+    # Prioritize the key from config, fall back to environment variable
+    final_api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+
+    if final_api_key:
+        try:
+            _genai_client = genai.Client(api_key=final_api_key)
+            logging.info("Successfully configured Gemini API.")
+        except Exception as e:
+            logging.error(f"Failed to configure Gemini API: {e}")
+            _genai_client = None
+    else:
+        logging.warning(
+            "Gemini API key not provided in config or GOOGLE_API_KEY environment variable. Model-based graders will not function."
+        )
+
+
+def _resolve_template(
+    template_string: str, completion: str, sample: Dict[str, Any]
+) -> str:
+    """Resolves template placeholders in a string with actual data."""
+    resolved_string = template_string.replace("{{ sample.output_text }}", completion)
+    for match in re.finditer(r"{{{\s*item\.([^\s]+)\s*}}}", resolved_string):
+        key = match.group(1)
+        if key in sample:
+            resolved_string = resolved_string.replace(match.group(0), str(sample[key]))
+    return resolved_string
+
+
+def _call_gemini_grader(
+    model: str,
+    message: str,
+    system_prompt: Optional[str] = None,
+    schema: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+):
+    """Calls the Gemini API for model-based grading after ensuring configuration."""
+    _ensure_genai_configured(api_key)
+    if not _genai_client:
+        return ""
+    try:
+        response = _genai_client.models.generate_content(
+            model=model,
+            contents=[message],
+            config={
+                "system_instruction": system_prompt,
+                "response_schema": schema,
+            },
+        )
+        return response
+    except Exception as e:
+        logging.error(f"Error calling Gemini API: {e}")
+        return ""
+
+
+def string_check_reward(
+    config: StringCheckRewardConfig, completions: List[str], **kwargs
+) -> List[float]:
     """
-    if not reward_config or not reward_config.functions:
+    Calculates reward based on simple string comparisons.
+    NOTE: You should avoid using this and use format or accuracy rewards if possible.
+    If you need to check text, try to use text_similarity_reward because this is very brittle.
+    """
+    reference_values = kwargs.get(config.reference_field, [])
+    op_map = {
+        "eq": lambda c, r: c == r,
+        "ne": lambda c, r: c != r,
+        "like": lambda c, r: r in c,
+        "ilike": lambda c, r: r.lower() in c.lower(),
+    }
+    op = op_map[config.operation]
+    return [
+        1.0 if op(comp, ref) else 0.0
+        for comp, ref in zip(completions, reference_values)
+    ]
+
+
+def text_similarity_reward(
+    config: TextSimilarityRewardConfig, completions: List[str], **kwargs
+) -> List[float]:
+    """
+    Calculates reward based on various text similarity metrics.
+    Requires a reference field in the dataset to compare against.
+    For example if you have a "solution" column in the dataset, it will be picked up and used here.
+    """
+    reference_values = kwargs.get(config.reference_field, [])
+    metric = config.evaluation_metric
+    rewards = []
+    for comp, ref in zip(completions, reference_values):
+        score = 0.0
+        if metric == "cosine":
+            _ensure_genai_configured(config.gemini_api_key)
+            if _genai_client:
+                try:
+                    # Generate embeddings
+                    comp_emb = _genai_client.models.embed_content(
+                        model=config.embedding_model, content=comp
+                    )["embeddings"]
+                    ref_emb = _genai_client.models.embed_content(
+                        model=config.embedding_model, content=ref
+                    )["embeddings"]
+                    # Calculate cosine similarity
+                    score = np.dot(comp_emb, ref_emb) / (
+                        np.linalg.norm(comp_emb) * np.linalg.norm(ref_emb)
+                    )
+                except Exception as e:
+                    logging.error(f"Cosine similarity failed: {e}")
+        else:
+            comp_tokens, ref_tokens = comp.split(), ref.split()
+            if metric == "bleu":
+                score = sentence_bleu([ref_tokens], comp_tokens)
+            elif metric == "gleu":
+                score = sentence_gleu([ref_tokens], comp_tokens)
+            elif metric == "meteor":
+                score = single_meteor_score(ref_tokens, comp_tokens)
+            elif metric.startswith("rouge"):
+                score = (
+                    rouge_scorer.RougeScorer([metric], use_stemmer=True)
+                    .score(ref, comp)[metric]
+                    .fmeasure
+                )
+            # We can support other metrics if possible, but for GLEU and cosine are the best
+        rewards.append(score)
+    return rewards
+
+
+SCORE_MODEL_SYSTEM_PROMPT = """You are an AI judge. Your task is to provide a numerical score for a given model response based on a user's instruction.
+
+You must respond in a valid JSON format. The JSON object should have the following schema:
+{
+  "explanation": "A short, clear explanation for your score.",
+  "score": "A float between 0.0 and 1.0, where 1.0 is the best score."
+}"""
+
+LABEL_MODEL_SYSTEM_PROMPT = """You are an AI judge. Your task is to classify a given model response with one of the provided labels based on a user's instruction.
+
+You must respond in a valid JSON format. The JSON object should have the following schema:
+{
+  "explanation": "A short, clear explanation for your choice.",
+  "label": "One of the provided labels."
+}"""
+
+
+class ScoreModelResponse(BaseModel):
+    """Pydantic model for parsing the score model judge's response."""
+
+    explanation: str
+    score: float
+
+
+class LabelModelResponse(BaseModel):
+    """Pydantic model for parsing the label model judge's response."""
+
+    explanation: str
+    label: str
+
+
+def score_model_reward(
+    config: ScoreModelRewardConfig,
+    completions: List[str],
+    **kwargs,
+) -> List[float]:
+    """Calculates reward by calling a score-based LLM judge."""
+    rewards = []
+    system_prompt = SCORE_MODEL_SYSTEM_PROMPT
+    if config.range:
+        system_prompt += f"\nThe score must be within the range {config.range}."
+
+    for i, completion in enumerate(completions):
+        current_sample = {key: values[i] for key, values in kwargs.items()}
+        user_prompt = _resolve_template(config.prompt, completion, current_sample)
+
+        response_text = _call_gemini_grader(
+            config.model,
+            user_prompt,
+            system_prompt,
+            ScoreModelResponse.model_json_schema(),
+            api_key=config.gemini_api_key,
+        )
+        score = 0.0
+        try:
+            parsed_response = ScoreModelResponse.model_validate_json(response_text)
+            score = parsed_response.score
+            if config.range:
+                score = max(config.range[0], min(score, config.range[1]))
+        except Exception as e:
+            logging.warning(
+                f"Failed to parse score model judge response: {e}\nResponse was: {response_text}"
+            )
+        rewards.append(score)
+    return rewards
+
+
+def label_model_reward(
+    config: LabelModelRewardConfig,
+    completions: List[str],
+    **kwargs,
+) -> List[float]:
+    """Calculates reward by calling a label-based LLM judge."""
+    rewards = []
+    labels_text = ", ".join(config.labels)
+    system_prompt = f"{LABEL_MODEL_SYSTEM_PROMPT}\nYou must choose one of the following labels: [{labels_text}]"
+
+    for i, completion in enumerate(completions):
+        current_sample = {key: values[i] for key, values in kwargs.items()}
+        user_prompt = _resolve_template(config.prompt, completion, current_sample)
+
+        response_text = _call_gemini_grader(
+            config.model,
+            user_prompt,
+            system_prompt,
+            LabelModelResponse.model_json_schema(),
+            api_key=config.gemini_api_key,
+        )
+        score = 0.0
+        try:
+            parsed_response = LabelModelResponse.model_validate_json(response_text)
+            if parsed_response.label in config.passing_labels:
+                score = 1.0
+        except Exception as e:
+            logging.warning(
+                f"Failed to parse label model judge response: {e}\nResponse was: {response_text}"
+            )
+        rewards.append(score)
+    return rewards
+
+
+@NotImplementedError(
+    "Executing python reward functions is not supported since it requires sandboxing."
+)
+def python_reward(
+    config: PythonRewardConfig, completions: List[str], **kwargs
+) -> List[float]:
+    """Placeholder for executing custom Python code."""
+    logging.warning(
+        f"Python grader '{config.name}' is a placeholder and will return 0.0 for all samples."
+    )
+    return [0.0] * len(completions)
+
+
+RULER_SYSTEM_PROMPT = """
+You are an impartial AI judge. Your role is to evaluate a batch of model-generated responses based on a given set of rules, and score them relative to each other.
+
+You will be provided with:
+1. A list of rules.
+2. A list of model-generated responses, each with a unique `completion_id`.
+
+Your task is to evaluate each response and provide a score from 0.0 to 1.0 for each one. A score of 1.0 is best. You should consider the relative quality of the responses when assigning scores.
+
+You must respond in a valid JSON format. Do not add any text outside of the JSON structure.
+
+The JSON object should have the following schema:
+{
+  "scores": [
+    {
+      "completion_id": "The integer ID of the completion you are scoring.",
+      "explanation": "A short, clear explanation for your score.",
+      "score": "A float between 0.0 and 1.0."
+    }
+  ]
+}
+"""
+
+
+class RulerScore(BaseModel):
+    """Pydantic model for a single RULER score."""
+
+    completion_id: int
+    explanation: str
+    score: float
+
+
+class RulerBatchResponse(BaseModel):
+    """Pydantic model for parsing the RULER judge's batch response."""
+
+    scores: List[RulerScore]
+
+
+def ruler_reward(
+    config: RulerRewardConfig,
+    completions: List[str],
+    **kwargs,
+) -> List[float]:
+    """
+    Calculates reward by calling a RULER-style LLM judge on a batch of completions.
+    This is a reference-free grader that evaluates responses against a set of rules / rubric.
+
+    For RULER, refer to: https://art.openpipe.ai/fundamentals/ruler
+    RULER (Relative Universal LLM Elicit Rewards) is a type of LLM-as-judge reward function.
+    However, it differs from directing asking for score and labels in the sense that it evaluates responses based on their relative quality to each other.
+    It also considers a set of explicit rules from the user, which acts like "soft" reward engineering.
+    This implementation is adapted and simplified from ART (Agent reinforcement trainer) by OpenPipe, replaces "trajectories" for agents with more generic use cases.
+
+    Our implementation is based on ART's RULER's steps:
+    1. Generate N trajectories for a given scenario
+    2. Pass all N trajectories to RULER
+    3. RULER deduplicates common prefixes (e.g., identical system messages)
+    4. An LLM judge scores each trajectory from 0 to 1 based on goal achievement
+    5. These scores are used directly as rewards in GRPO training
+
+    NOTE: We cannot provide a default rubric because unlike ART's agent scenarios, we don't know what the user wants to achieve.
+    TODO: We are missing some optimizations from ART, such as deduplication of common prefixes
+    """
+    if not completions:
         return []
 
-    reward_functions = []
+    rules_text = "\n".join(f"- {rule}" for rule in config.rules)
 
-    # 1. Load built in functions
-    for function_name in reward_config.functions:
-        if function_name in BUILT_IN_REWARDS:
-            reward_functions.append(BUILT_IN_REWARDS[function_name])
-            logging.info(f"Loaded reward function: {function_name}")
-        else:
-            logging.error(
-                f"Unknown reward function: {function_name}. "
-                f"Available functions: {list(BUILT_IN_REWARDS.keys())}"
+    # Prepare the single prompt with all completions
+    completions_text = []
+    for i, completion in enumerate(completions):
+        completions_text.append(f'<completion id="{i}">\n{completion}\n</completion>')
+
+    user_prompt = f"""Please evaluate the following responses based on these rules:
+
+    **Rules:**
+    {rules_text}
+
+    **Responses to Evaluate:**
+    {chr(10).join(completions_text)}
+    """
+
+    response_text = _call_gemini_grader(
+        config.model,
+        user_prompt,
+        RULER_SYSTEM_PROMPT,
+        RulerBatchResponse.model_json_schema(),
+        api_key=config.gemini_api_key,
+    )
+
+    # Initialize rewards with a default of 0.0
+    rewards = [0.0] * len(completions)
+    try:
+        parsed_response = RulerBatchResponse.model_validate_json(response_text)
+
+        if len(parsed_response.scores) != len(completions):
+            logging.warning(
+                f"RULER judge returned a different number of scores ({len(parsed_response.scores)}) than completions ({len(completions)})."
             )
 
-    return reward_functions
+        for score_obj in parsed_response.scores:
+            comp_id = score_obj.completion_id
+            if 0 <= comp_id < len(rewards):
+                # Ensure score is within the valid range
+                score = max(0.0, min(score_obj.score, 1.0))
+                rewards[comp_id] = score
+            else:
+                logging.warning(
+                    f"RULER judge returned an invalid completion_id: {comp_id}"
+                )
+
+    except Exception as e:
+        logging.warning(
+            f"Failed to parse RULER judge batch response: {e}\nResponse was: {response_text}"
+        )
+
+    return rewards
+
+
+# --- Dispatcher and Loader ---
+
+GRADER_DISPATCHER = {
+    "built_in": BUILT_IN_REWARDS,
+    "ruler": ruler_reward,
+    "string_check": string_check_reward,
+    "text_similarity": text_similarity_reward,
+    "score_model": score_model_reward,
+    "label_model": label_model_reward,
+    "python": python_reward,
+}
+
+
+def load_reward_functions_from_config(
+    reward_config: List[AnyGraderConfig],
+) -> List[Callable]:
+    """
+    Loads and prepares a list of reward functions from the configuration.
+
+    This factory interprets the `RewardConfig` and returns a list of callables that
+    the TRL trainer can execute. It uses a direct dispatch mechanism without
+    any complex wrappers.
+
+    Args:
+        reward_config: The Pydantic model instance defining which rewards to load.
+
+    Returns:
+        A list of callable reward functions.
+    """
+    graders = []
+    for config in reward_config:
+        func = None
+        if isinstance(config, BuiltInRewardConfig):
+            func = GRADER_DISPATCHER["built_in"].get(config.function_name)
+            if func:
+                if config.parameters:
+                    graders.append(
+                        partial(func, **config.parameters.model_dump(exclude_none=True))
+                    )
+                else:
+                    graders.append(func)
+                logging.info(
+                    f"Loaded built-in reward function: '{config.function_name}'"
+                )
+        else:
+            func = GRADER_DISPATCHER.get(config.type)
+            if func:
+                graders.append(partial(func, config))
+                logging.info(
+                    f"Loaded grader-style reward function: type='{config.type}', name='{config.name}'"
+                )
+
+        if not func:
+            logging.error(f"Could not find reward function for config: {config}")
+
+    return graders

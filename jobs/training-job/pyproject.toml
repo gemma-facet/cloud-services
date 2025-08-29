@@ -23,7 +23,9 @@ dependencies = [
     "xformers==0.0.29.post3",
     "pillow>=10.0.0",
     "math-verify",
-    "latex2sympy2_extended"
+    "latex2sympy2_extended",
+    "rouge_score",
+    "nltk"
 ]
 
 [[tool.uv.index]]
