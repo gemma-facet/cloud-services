@@ -198,6 +198,8 @@ class DatasetService:
                 full_splits=metadata["splits"],
             )
 
+            del dataset
+            del processed_dataset
             return result
 
         except Exception as e:

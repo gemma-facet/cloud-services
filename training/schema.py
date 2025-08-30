@@ -118,14 +118,10 @@ class BuiltInRewardConfig(BaseModel):
     name: str = Field(..., description="Unique name for this reward function instance.")
     type: Literal["built_in"] = "built_in"
     function_name: Literal[
-        "think_format",
+        "format_reward",
+        "count_xml",
         "expression_accuracy",
         "numerical_accuracy",
-        "correctness",
-        "is_integer",
-        "strict_format",
-        "soft_format",
-        "xml_count",
     ] = Field(..., description="The name of the built-in, batch-based reward function.")
     parameters: Optional[BuiltInRewardParameters] = Field(
         None, description="Optional parameters for the built-in function."
