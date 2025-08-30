@@ -48,6 +48,11 @@ class TextSimilarityRewardConfig(BaseModel):
     )
 
 
+# NOTE: The following two configs support providing a prompt to the LLM judge with template variables.
+# Using {{completion}} will be replaced with the model's generated text,
+# and {{item.<field_name>}} will be replaced with the corresponding field from the dataset item.
+
+
 class ScoreModelRewardConfig(BaseModel):
     """Config for using an LLM to score a response numerically."""
 
@@ -95,7 +100,10 @@ class LabelModelRewardConfig(BaseModel):
 
 
 class PythonRewardConfig(BaseModel):
-    """Config for executing custom Python code as a reward function."""
+    """
+    Config for executing custom Python code as a reward function.
+    NOTE: THIS IS NOT SUPPORTED YET!
+    """
 
     name: str = Field(..., description="Unique name for this reward function instance.")
     type: Literal["python"] = "python"
@@ -118,14 +126,10 @@ class BuiltInRewardConfig(BaseModel):
     name: str = Field(..., description="Unique name for this reward function instance.")
     type: Literal["built_in"] = "built_in"
     function_name: Literal[
-        "think_format",
+        "format_reward",
+        "count_xml",
         "expression_accuracy",
         "numerical_accuracy",
-        "correctness",
-        "is_integer",
-        "strict_format",
-        "soft_format",
-        "xml_count",
     ] = Field(..., description="The name of the built-in, batch-based reward function.")
     parameters: Optional[BuiltInRewardParameters] = Field(
         None, description="Optional parameters for the built-in function."

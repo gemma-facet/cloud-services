@@ -1,3 +1,12 @@
+"""
+This reward functions module supports GRPO and related RL fine tuning algorithms.
+It includes two types of reward functions:
+
+1. Simple reward engineering functions inspired by Huggingface OpenR1, commonly used in simple reasoning tasks like GSM8K
+2. Advanced graders inspired by OpenAI Platform Graders, which may leverage LLM and embedding models
+3. Special grader "RULER" inspired by OpenPipe's ART, most recommended for all use cases
+"""
+
 import re
 import logging
 import os
@@ -27,10 +36,20 @@ from schema import (
 # This is usually a XML based format with <reasoning> and <answer> tags
 # You should provide these tags in the configurations so we can adapt to parse them properly
 # If you require other use case, please consider Graders instead of Reward Functions
+# Inspiration: https://github.com/huggingface/open-r1/blob/main/src/open_r1/rewards.py
 
 
 def extract_xml_answer(text: str, answer_tag: str = "answer") -> str:
-    """Extracts content from the first specified tag in a string."""
+    """
+    Extracts content from the first specified tag in a string.
+
+    Args:
+        text (str): The input string containing XML-like tags.
+        answer_tag (str): The tag to extract content from (default is 'answer').
+
+    Returns:
+        str: The content within the specified tags, or the original text if tags are not found.
+    """
     start_tag = f"<{answer_tag}>"
     end_tag = f"</{answer_tag}>"
     if start_tag not in text:
@@ -42,7 +61,10 @@ def extract_xml_answer(text: str, answer_tag: str = "answer") -> str:
 
 
 def extract_answer_from_dataset(text: str) -> str:
-    """Extracts content after the '####' delimiter."""
+    """
+    Extracts content after the '####' delimiter.
+    This works with most datasets like GSM8K, MATH, etc.
+    """
     if "####" in text:
         return text.split("####", 1)[-1].strip()
     if "<answer>" in text:
@@ -53,7 +75,11 @@ def extract_answer_from_dataset(text: str) -> str:
 def expression_accuracy_reward(
     completions: List[str], solution: List[str], **kwargs
 ) -> List[Optional[float]]:
-    """Verifies mathematical expressions against a solution."""
+    """
+    Verifies mathematical expressions against a solution.
+    Requires the math-verify package.
+    You should ensure that the model outputs valid LaTeX expressions, otherwise it defaults to simple text comparison.
+    """
     try:
         from math_verify import LatexExtractionConfig, parse, verify
         from latex2sympy2_extended import NormalizationConfig
@@ -105,7 +131,9 @@ def expression_accuracy_reward(
 def numerical_accuracy_reward(
     completions: List[str], solution: List[str], answer_tag: str = "answer", **kwargs
 ) -> List[Optional[float]]:
-    """Verifies a numerical answer."""
+    """
+    Verifies a numerical answer by extracting it from the XML tags and extracting the ground truth from the dataset.
+    """
 
     def _normalize_and_compare(model_ans: str, gt_ans: str) -> bool:
         model_ans_norm, gt_ans_norm = (
@@ -136,6 +164,8 @@ def numerical_accuracy_reward(
 def format_reward_func(
     completions, think_tag="reasoning", answer_tag="answer", **kwargs
 ) -> list[float]:
+    """
+    Versatile reward function to check if the model output matches a specific XML format."""
     pattern = (
         rf"^<{think_tag}>\n.*?\n</{think_tag}>\n<{answer_tag}>\n.*?\n</{answer_tag}>\n$"
     )
@@ -144,8 +174,8 @@ def format_reward_func(
     return [0.5 if match else 0.0 for match in matches]
 
 
-# Function to count specific XML tokens and award a small reward for each.
 def count_xml(text, think_tag="reasoning", answer_tag="answer") -> float:
+    """Function to count specific XML tokens and award a small reward for each."""
     count = 0.0
     if text.count(f"<{think_tag}>\n") == 1:
         count += 0.125
@@ -170,7 +200,10 @@ BUILT_IN_REWARDS = {
 
 # -- Grader reward functions and helpers --
 # These are graders adapted from the OpenAI Fine tuning platform Graders design
-# You should use LLM based graders if possible
+# Reference: https://platform.openai.com/docs/guides/graders
+# The schema is pretty much identical but simplified and certain features are reduced.
+# All graders available on the docs are supported except for Python custom functions since that requires sandboxing
+# In addition, RULER grader is added you may refer to its docstring for details.
 
 _genai_client = None
 
@@ -200,9 +233,22 @@ def _ensure_genai_configured(api_key: Optional[str] = None):
 def _resolve_template(
     template_string: str, completion: str, sample: Dict[str, Any]
 ) -> str:
-    """Resolves template placeholders in a string with actual data."""
-    resolved_string = template_string.replace("{{ sample.output_text }}", completion)
-    for match in re.finditer(r"{{{\s*item\.([^\s]+)\s*}}}", resolved_string):
+    """
+    Resolves template placeholders in a string with actual data.
+        1. Replaces {{ completion }} with the actual completion text.
+        2. Replaces {{{ sample.field_name }}} with the corresponding value from the sample dictionary.
+
+    Args:
+        template_string (str): The template string containing placeholders.
+        completion (str): The model-generated completion text.
+        sample (Dict[str, Any]): A dictionary representing the current data sample,
+            this involves all the columns in the dataset at the present row
+
+    Returns:
+        str: The resolved string with placeholders replaced by actual values.
+    """
+    resolved_string = template_string.replace("{{ completion }}", completion)
+    for match in re.finditer(r"{{{\s*sample\.([^\s]+)\s*}}}", resolved_string):
         key = match.group(1)
         if key in sample:
             resolved_string = resolved_string.replace(match.group(0), str(sample[key]))
@@ -216,7 +262,19 @@ def _call_gemini_grader(
     schema: Optional[Dict[str, Any]] = None,
     api_key: Optional[str] = None,
 ):
-    """Calls the Gemini API for model-based grading after ensuring configuration."""
+    """
+    Calls the Gemini API for model-based grading after ensuring configuration.
+
+    Args:
+        model (str): The Gemini model to use for grading.
+        message (str): The user prompt or message to send to the model.
+        system_prompt (Optional[str]): An optional system prompt to guide the model's behavior.
+        schema (Optional[Dict[str, Any]]): An optional JSON schema to enforce structured responses.
+        api_key (Optional[str]): An optional API key for Gemini, if not provided, it will use the environment variable.
+
+    Returns:
+        The response in the format specified by the schema, or an empty string on failure.
+    """
     _ensure_genai_configured(api_key)
     if not _genai_client:
         return ""
@@ -229,6 +287,7 @@ def _call_gemini_grader(
                 "response_schema": schema,
             },
         )
+        logging.debug(f"Gemini grader response: {response}")
         return response
     except Exception as e:
         logging.error(f"Error calling Gemini API: {e}")
@@ -342,14 +401,32 @@ def score_model_reward(
     completions: List[str],
     **kwargs,
 ) -> List[float]:
-    """Calculates reward by calling a score-based LLM judge."""
+    """
+    Calculates reward by calling a score-based LLM judge.
+    This function uses a Gemini model to evaluate each completion and assign a numerical score.
+    The user should specify a prompt that includes the {{completion}} placeholder and any relevant context from the dataset.
+    For example, this prompt can include how should the model judge, expected format, example responses and their scores, etc.
+
+    NOTE: This runs a loop over all the completions instead of batching them into one call, so that the judge LLM only
+    sees one completion at a time. This is to avoid the model comparing completions against each other. You should use RULER
+    if you intend otherwise, it is also more cost effective by reducing the number of judge LLM calls. e.g. this will call
+    the judge LLM N times for N completions, while RULER calls it only once for N completions (N = number of generations).
+    """
     rewards = []
     system_prompt = SCORE_MODEL_SYSTEM_PROMPT
     if config.range:
         system_prompt += f"\nThe score must be within the range {config.range}."
 
     for i, completion in enumerate(completions):
-        current_sample = {key: values[i] for key, values in kwargs.items()}
+        # structure: {col_name: value_for_this_iter, ...}
+        # We skip any values that are not indexable or have the wrong length e.g. trainer_state
+        current_sample = {
+            key: values[i]
+            for key, values in kwargs.items()
+            if hasattr(values, "__getitem__")
+            and hasattr(values, "__len__")
+            and len(values) == len(completions)
+        }
         user_prompt = _resolve_template(config.prompt, completion, current_sample)
 
         response_text = _call_gemini_grader(
@@ -378,13 +455,23 @@ def label_model_reward(
     completions: List[str],
     **kwargs,
 ) -> List[float]:
-    """Calculates reward by calling a label-based LLM judge."""
+    """
+    Calculates reward by calling a label-based LLM judge.
+    The user specificiation is very similar to score_model_reward, except that the model must choose from a set of labels.
+    It returns 1.0 if the chosen label is in the passing_labels list, otherwise 0.0.
+    """
     rewards = []
     labels_text = ", ".join(config.labels)
     system_prompt = f"{LABEL_MODEL_SYSTEM_PROMPT}\nYou must choose one of the following labels: [{labels_text}]"
 
     for i, completion in enumerate(completions):
-        current_sample = {key: values[i] for key, values in kwargs.items()}
+        current_sample = {
+            key: values[i]
+            for key, values in kwargs.items()
+            if hasattr(values, "__getitem__")
+            and hasattr(values, "__len__")
+            and len(values) == len(completions)
+        }
         user_prompt = _resolve_template(config.prompt, completion, current_sample)
 
         response_text = _call_gemini_grader(
@@ -558,9 +645,7 @@ def load_reward_functions_from_config(
     """
     Loads and prepares a list of reward functions from the configuration.
 
-    This factory interprets the `RewardConfig` and returns a list of callables that
-    the TRL trainer can execute. It uses a direct dispatch mechanism without
-    any complex wrappers.
+    This factory interprets the `RewardConfig` and returns a list of callables that the TRL trainer can execute.
 
     Args:
         reward_config: The Pydantic model instance defining which rewards to load.
