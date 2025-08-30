@@ -171,6 +171,40 @@ These are the most powerful graders. They use a judge LLM (e.g., Gemini 2.0 Flas
 
 **Configuration Note:** For all model-based graders (`text_similarity` with cosine, `score_model`, `label_model`, and `ruler`), you can provide a `gemini_api_key` directly in the configuration. If omitted, the system will fall back to using the `GOOGLE_API_KEY` environment variable.
 
+#### Example `reward_config`
+
+```json
+"reward_config": [
+  {
+    "name": "builtin_format",
+    "type": "built_in",
+    "function_name": "format_reward",
+    "parameters": {
+      "think_tag": "reasoning",
+      "answer_tag": "answer"
+    }
+  },
+  {
+    "name": "similarity_check",
+    "type": "text_similarity",
+    "reference_field": "reference_answer",
+    "evaluation_metric": "bleu"
+  },
+  {
+    "name": "ruler_grader",
+    "type": "ruler",
+    "model": "gemini-2.0-flash",
+    "rules": [
+      "The response should show clear reasoning before the answer.",
+      "The final answer should be a number at the end of the response."
+    ],
+    "gemini_api_key": "YOUR_GEMINI_API_KEY"
+  }
+]
+```
+
+You can combine any number of graders in the list. Each grader will contribute to the final reward used for
+
 ## Example Training Config
 
 I will update this later...
@@ -215,6 +249,17 @@ I will update this later...
     "compute_eval_metrics": true,
     "batch_eval_metrics": false
   },
+  "reward_config": [
+    {
+      "name": "builtin_format",
+      "type": "built_in",
+      "function_name": "format_reward",
+      "parameters": {
+        "think_tag": "reasoning",
+        "answer_tag": "answer"
+      }
+    }
+  ],
   "wandb_config": null
 }
 ```
