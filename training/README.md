@@ -64,6 +64,17 @@ Start a new training job.
       "compute_eval_metrics": true,
       "batch_eval_metrics": false
     },
+    "reward_config": [
+      {
+        "name": "builtin_format",
+        "type": "built_in",
+        "function_name": "format_reward",
+        "parameters": {
+          "think_tag": "reasoning",
+          "answer_tag": "answer"
+        }
+      }
+    ],
     "wandb_config": null
   }
 }

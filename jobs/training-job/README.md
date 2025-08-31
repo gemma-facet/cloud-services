@@ -140,6 +140,71 @@ Configure evaluation during training:
 - **wandb**: Provide your wandb API key and other variables to set up cloud logging
 - **streaming logs**: Stream logs to frontend or a CLI whatever toolkit (NOT SUPPORTED, PLANNED)
 
+### Reward Functions (for GRPO)
+
+When using the `GRPOTrainer`, you must provide a `reward_config` list in your training configuration. This list defines one or more reward functions, or "graders," that score the model's generated responses. The final reward is the sum of the scores from all configured graders.
+
+There are three main categories of graders available:
+
+#### 1. Built-in Functions
+
+These are simple, non-LLM-based functions for common checks.
+
+- **`expression_accuracy`**: Verifies mathematical expressions.
+- **`numerical_accuracy`**: Verifies a numerical answer against a solution.
+- **`format_reward`**: Checks if the output strictly follows a `<think>...</think><answer>...</answer>` format. The tags are configurable via the `parameters` field (e.g., `think_tag: "reasoning"`).
+
+#### 2. Reference-Based Graders
+
+These graders compare the model's output to a reference column in your dataset.
+
+- **`string_check`**: Performs simple string comparisons (e.g., `eq`, `like`).
+- **`text_similarity`**: Calculates a score based on text similarity metrics (e.g., `bleu`, `rouge_l`, `cosine`).
+
+#### 3. Model-Based Graders (Reference-Free)
+
+These are the most powerful graders. They use a judge LLM (e.g., Gemini 2.0 Flash) to evaluate responses without needing a ground-truth solution.
+
+- **`score_model`**: Assigns a numerical score (0.0 to 1.0) to a response based on a custom instruction you provide in the `prompt` field.
+- **`label_model`**: Classifies a response with a specific label from a list you provide. Useful for categorical evaluation.
+- **`ruler`**: A sophisticated grader that evaluates a batch of responses relative to each other based on a set of `rules` you define. This is highly effective for GRPO as it focuses on relative quality rather than absolute scores.
+
+**Configuration Note:** For all model-based graders (`text_similarity` with cosine, `score_model`, `label_model`, and `ruler`), you can provide a `gemini_api_key` directly in the configuration. If omitted, the system will fall back to using the `GOOGLE_API_KEY` environment variable.
+
+#### Example `reward_config`
+
+```json
+"reward_config": [
+  {
+    "name": "builtin_format",
+    "type": "built_in",
+    "function_name": "format_reward",
+    "parameters": {
+      "think_tag": "reasoning",
+      "answer_tag": "answer"
+    }
+  },
+  {
+    "name": "similarity_check",
+    "type": "text_similarity",
+    "reference_field": "reference_answer",
+    "evaluation_metric": "bleu"
+  },
+  {
+    "name": "ruler_grader",
+    "type": "ruler",
+    "model": "gemini-2.0-flash",
+    "rules": [
+      "The response should show clear reasoning before the answer.",
+      "The final answer should be a number at the end of the response."
+    ],
+    "gemini_api_key": "YOUR_GEMINI_API_KEY"
+  }
+]
+```
+
+You can combine any number of graders in the list. Each grader will contribute to the final reward used for
+
 ## Example Training Config
 
 I will update this later...
@@ -184,6 +249,17 @@ I will update this later...
     "compute_eval_metrics": true,
     "batch_eval_metrics": false
   },
+  "reward_config": [
+    {
+      "name": "builtin_format",
+      "type": "built_in",
+      "function_name": "format_reward",
+      "parameters": {
+        "think_tag": "reasoning",
+        "answer_tag": "answer"
+      }
+    }
+  ],
   "wandb_config": null
 }
 ```

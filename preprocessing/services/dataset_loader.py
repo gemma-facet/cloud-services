@@ -1,5 +1,5 @@
 import logging
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, IterableDataset, Dataset
 from storage.base import StorageInterface
 from schema import (
     PreprocessingConfig,
@@ -205,6 +205,8 @@ class DatasetLoader:
         - ManualSplitConfig: Loads train split, samples it, then splits into train/test
         - HFSplitConfig: Loads all specified splits from Hugging Face
 
+        NOTE: This will use streaming if sample_size is provided to avoid loading large datasets
+
         Args:
             dataset_name (str): The name of the dataset on Hugging Face (e.g., 'squad', 'glue').
             config (PreprocessingConfig): Configuration for processing, including split_config.
@@ -223,56 +225,64 @@ class DatasetLoader:
                 if not config.split_config.split:
                     raise ValueError("No split specified")
 
-                dataset = load_dataset(
-                    dataset_name, dataset_subset, split=config.split_config.split
-                )
-
                 sample_size = config.split_config.sample_size
-                if sample_size and dataset.num_rows > sample_size:
-                    dataset = dataset.shuffle(seed=42).select(range(sample_size))
+                if sample_size:
+                    iter_ds: IterableDataset = load_dataset(
+                        dataset_name,
+                        dataset_subset,
+                        split=config.split_config.split,
+                        streaming=True,
+                    )
+                    # Take a sample of the dataset using streaming, it is still IterableDataset
+                    iter_ds = iter_ds.shuffle(seed=42).take(sample_size)
+                    # now convert to list and create a Dataset from it, this is where the iterator is executed
+                    dataset = Dataset.from_list(list(iter_ds))
+                else:
+                    dataset: Dataset = load_dataset(
+                        dataset_name,
+                        dataset_subset,
+                        split=config.split_config.split,
+                    )
+
                 return DatasetDict({"train": dataset})
 
             elif isinstance(config.split_config, ManualSplitConfig):
                 if not config.split_config.split:
                     raise ValueError("No split specified")
 
-                dataset = load_dataset(
-                    dataset_name, dataset_subset, split=config.split_config.split
-                )
-
                 sample_size = config.split_config.sample_size
                 test_size = config.split_config.test_size
 
-                # if sample_size and test_size are provided, sample and split into train/test
-                if sample_size and dataset.num_rows > sample_size and test_size:
+                # we use streaming if sample size is provided to handle selecting a subset
+                if sample_size:
+                    iter_ds: IterableDataset = load_dataset(
+                        dataset_name,
+                        dataset_subset,
+                        split=config.split_config.split,
+                        streaming=True,
+                    )
+                    iter_ds = iter_ds.shuffle(seed=42).take(sample_size)
+                    dataset = Dataset.from_list(list(iter_ds))
+                else:
+                    # Otherwise we load the entire dataset and assume the sample is all rows
+                    dataset: Dataset = load_dataset(
+                        dataset_name,
+                        dataset_subset,
+                        split=config.split_config.split,
+                    )
+                    sample_size = dataset.num_rows
+
+                if test_size:
                     train_size = int(sample_size * (1 - test_size))
                     shuffled_dataset = dataset.shuffle(seed=42)
                     train_split = shuffled_dataset.select(range(train_size))
                     test_split = shuffled_dataset.select(range(train_size, sample_size))
                     return DatasetDict({"train": train_split, "test": test_split})
-
-                # if sample_size is provided, sample the data
-                elif sample_size and dataset.num_rows > sample_size:
-                    sampled_dataset = dataset.shuffle(seed=42).select(
-                        range(sample_size)
-                    )
-                    return DatasetDict({"train": sampled_dataset})
-
-                # if test_size is provided, split into train/test
-                elif test_size:
-                    train_size = int(dataset.num_rows * (1 - test_size))
-                    shuffled_dataset = dataset.shuffle(seed=42)
-                    train_split = shuffled_dataset.select(range(train_size))
-                    test_split = shuffled_dataset.select(
-                        range(train_size, dataset.num_rows)
-                    )
-                    return DatasetDict({"train": train_split, "test": test_split})
-
-                # if no sampling or splitting is specified, return all data as train
                 else:
                     return DatasetDict({"train": dataset})
 
             elif isinstance(config.split_config, HFSplitConfig):
+                # You cannot select sample_size when using HF splits directly
                 if (
                     not config.split_config.train_split
                     or not config.split_config.test_split
