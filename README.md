@@ -4,6 +4,8 @@ Looking for a way to fine-tune small / vision language models without diving int
 
 This is brought to you by Jet Chiang (@supreme-gg-gg) & Adarsh Dubey (@inclinedadarsh) as part of Google Summer of Code 2025 @ Google DeepMind.
 
+Get started with our [beginner-friendly tutorial](docs/getting_started.md). Start running fine tuning jobs in minutes, not hours of cloud engineering, debugging with Unsloth, and reading through tens of long colab notebooks!
+
 ## GSoC Midterm Demo
 
 [![Demo Video](https://img.youtube.com/vi/r4jW997KXvc/0.jpg)](https://www.youtube.com/watch?v=r4jW997KXvc)
