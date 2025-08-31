@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from models import Export, ExportRequest, ExportResponse
+from schema import ExportRequest, ExportResponse
 
 app = FastAPI(
     title="Gemma Export Service",
@@ -15,7 +15,8 @@ async def health_check():
 
 @app.post("/export", response_model=ExportResponse)
 async def export(request: ExportRequest):
-    export = Export(
+    export = ExportResponse(
+        success=True,
         job_id=request.job_id,
         export_type=request.export_type,
     )
