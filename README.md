@@ -1,29 +1,43 @@
-# Web Platform for Gemma 3 VLM Fine-Tuning
+# Facet, a no-code fine-tuning PaaS for Gemma
 
-This project sets up cloud infrastructure on Google Cloud Platform (GCP) for managing and running fine tuning jobs on Gemma models. We use Cloud Run, Cloud Storage, Firestore, Firebase, API Gateway, and various LLM fine tuning and inference frameworks for a scalable, customizable, and efficient system. Besides accessing our service through our web platform, you can easily deploy this on your own GCP project, or use it as reference for building similar systems.
+Looking for a way to fine-tune small / vision language models without diving into complex code? Our no-code web platform simplifies the process of adapting LLM for task and domain specific use cases, allowing you to manage and run fine-tuning jobs effortlessly on Google Cloud Platform (GCP). From dataset preprocessing to model export, everything is customizable to your use case while being intuitive to use.
 
-Jet Chiang (@supreme-gg-gg) & Adarsh Dubey (@inclinedadarsh) -- Google Summer of Code 2025 @ Google DeepMind
+This is brought to you by Jet Chiang (@supreme-gg-gg) & Adarsh Dubey (@inclinedadarsh) as part of Google Summer of Code 2025 @ Google DeepMind.
 
 ## GSoC Midterm Demo
 
 [![Demo Video](https://img.youtube.com/vi/r4jW997KXvc/0.jpg)](https://www.youtube.com/watch?v=r4jW997KXvc)
 
+> A new demo is coming soon with more features as well as a beta release!
+
 ## Features
 
 - Data preprocessing (for vision and text) from custom uploaded and huggingface datasets
 - Data augmentation using NLP techniques and synthetic generation using LLM
-- Fine-tuning using both Huggingface or Unsloth frameworks (with 4/8 bit quantization)
-- Fine-tuning with PEFT (LoRA, QLoRA), RL (GRPO, PPO, to come soon), full SFT for various tasks like classification, text generation, reasoning, etc.
+- Fine-tuning using both Huggingface or Unsloth frameworks on text and multimodal datasets
+- Fine-tuning with SFT for domain adaptation, DPO for preference alignment, and GRPO for reasoning tasks
+- Fine-tuning with PEFT (LoRA, QLoRA) and full tuning, with quantization support (4-bit, 8-bit)
 - Export to multiple formats (supports transformeres, vLLM, Ollama, llama.cpp, etc) to GCS bucket or huggingface hub
+- Convert between different model formats to suite your deployment needs
 - Cloud logging integration with Weights & Biases or TensorBoard
 - Task-specific evaluation suites and batch inference ("vibe check") of fine tuned models
 
-## Coming Soon
+### Coming Soon
 
 - IaC and deployment scripts so you can run this on your own GCP project!
 - More data augmentation for vision and text datasets
 - Audio modality support for Gemma 3n
 - Direct deployment on GCP of fine tuned model using Ollama or vLLM (one-click and ready for inference)
+
+## Usage
+
+1. Use it for free on our website platform once it's live (beta coming soon!)
+
+2. Deploy the project to your own google cloud project!
+
+   We hope to support more flexible deployment options in the future.
+
+3. Use this as a reference to build your own fine-tuning service since we're fully open source!
 
 ## Architecture
 
@@ -60,15 +74,6 @@ end
     class F1,F2,H storage;
     class X gateway;
 ```
-
-## Security & Authentication
-
-- All API requests are authenticated via Firebase Auth (JWT) at the API Gateway layer.
-- API Gateway validates the token and injects the user’s UID as an `X-User-ID` header to all backend services.
-- All Cloud Run services are private and only accessible via the API Gateway.
-- Each backend service trusts the `X-User-ID` header and enforces per-user data scoping (datasets, jobs, etc).
-- No backend service performs token verification directly (unless running in local/dev mode).
-- Firestore documents for datasets and jobs include a `user_id` field for multi-tenant isolation.
 
 ## Developers Notes
 
