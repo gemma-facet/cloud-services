@@ -1,10 +1,12 @@
-# Running Fine-tuned Models in GGUF Format
+# Now it's time to ship
+
+## Running Fine-tuned Models Locally (GGUF)
 
 This provides a guide to run fine tuned models locally. For on the cloud, we have provided direct deployment options already using various backend providers :)
 
-This assumes that you have the model downloaded locally (we will add docs for on hub soon)
+You will need to download the converted GGUF file from the export section first. If you are using HF hub, you should directly provide the HF hub repo name to the following commands.
 
-## llama.cpp
+### llama.cpp
 
 1. Install `llama.cpp` following the [llama.cpp Installation Guide](https://github.com/ggerganov/llama.cpp#installation)
 
@@ -14,7 +16,7 @@ This assumes that you have the model downloaded locally (we will add docs for on
    llama-cli -m path-to-gguf-file -sys "system-prompt-if-any"
    ```
 
-## Ollama
+### Ollama
 
 1. Install Ollama: [Ollama Installation Guide](https://ollama.com/docs/installation)
 
@@ -55,3 +57,9 @@ This assumes that you have the model downloaded locally (we will add docs for on
    ```
 
    [references](https://huggingface.co/docs/hub/en/ollama)
+
+## Creating your own deployment service on Cloud (vLLM)
+
+We will guide you to deploying model on Cloud Run!
+
+We will plan to support other inference framework like SGLang soon. We might also support Ollama but that's more likely used on local deployment.
