@@ -75,7 +75,7 @@ def _build_shared_training_args(
     elif trainer_type == "grpo":
         # GRPO-specific parameters
         max_prompt_length = hyperparam.max_prompt_length
-        max_length = hyperparam.max_seq_length
+        max_length = hyperparam.max_length
         max_completion_length = max_length - max_prompt_length
 
         # This makes sure the entire image token is sent for vision
@@ -159,15 +159,20 @@ def _build_shared_training_args(
         # Unsloth-specific vision settings
         if hasattr(args, "dataset_num_proc"):
             args.dataset_num_proc = 1
-        if (
-            hasattr(args, "max_length") and trainer_type != "dpo"
-        ):  # DPO already sets max_length
-            args.max_length = 2048
+
+        # Set max length to None to avoid truncation of image tokens
+        # This applies to all trainers when modality is vision
+        if hasattr(args, "max_length"):
+            args.max_length = None
+        if hasattr(args, "max_prompt_length"):
+            args.max_prompt_length = None
+        if hasattr(args, "max_completion_length"):
+            args.max_completion_length = None
 
     return args
 
 
-def _reformat_vision_dataset(example, processor):
+def _reformat_vision_dataset(example):
     """
     Convert vision datasets from complete ChatML format to the format expected by GRPO/DPO trainers.
     This extracts images to a separate column and applies chat template to create prompt strings.
@@ -175,86 +180,66 @@ def _reformat_vision_dataset(example, processor):
 
     NOTE: We do NOT recommend using SFTTrainer with this YET due to multi-image support requiring data collator!!!
 
+    NOTE: This is used now because we have not completely migrated all datasets to this new format.
+    This is under work and once it's done we no longer need to reformat here.
+
     Automatically detects format:
     - Prompt-only format (for GRPO): {"prompt": [...], "answer": "...", "reasoning": "...", ...}
       Output: {"prompt": "templated_string", "image": PIL.Image, "answer": "...", "reasoning": "...", ...}
 
     - Preference format (for DPO): {"prompt": [...], "chosen": [...], "rejected": [...]}
-      Output: {"prompt": "templated_string", "chosen": "templated_string", "rejected": "templated_string", "image": PIL.Image}
+      Output: {"prompt": "templated_string", "chosen": "templated_string", "rejected": "templated_string", "images": [PIL.Image]}
     """
     from PIL import Image
 
-    # Use the tokenizer directly for Unsloth (processor.tokenizer for AutoProcessor)
-    tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    def get_images_from_prompt(prompt_messages):
+        image_list = []
+        if not isinstance(prompt_messages, list):
+            return image_list
 
-    def extract_images(messages):
-        """Extract images from messages for chat template"""
-        images = []
+        for message in prompt_messages:
+            if (
+                not isinstance(message, dict)
+                or "content" not in message
+                or not isinstance(message["content"], list)
+            ):
+                continue
 
-        for msg in messages:
-            content = msg.get("content", [])
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "image":
-                            img_data = item.get("image")
-                            if img_data:
-                                # Handle PIL Image objects
-                                if isinstance(img_data, Image.Image):
-                                    images.append(img_data.convert("RGB"))
-                                # Handle HuggingFace dataset format: {"bytes": ..., "path": null}
-                                elif isinstance(img_data, dict) and "bytes" in img_data:
-                                    image_bytes = img_data["bytes"]
-                                    if isinstance(image_bytes, (bytes, bytearray)):
-                                        pil_image = Image.open(io.BytesIO(image_bytes))
-                                        images.append(pil_image.convert("RGB"))
+            for content_part in message["content"]:
+                if (
+                    isinstance(content_part, dict)
+                    and content_part.get("type") == "image"
+                ):
+                    image_data = content_part.get("image")
+                    if isinstance(image_data, Image.Image):
+                        image_list.append(image_data.convert("RGB"))
+                    elif isinstance(image_data, dict) and "bytes" in image_data:
+                        img_bytes = image_data["bytes"]
+                        if isinstance(img_bytes, (bytes, bytearray)):
+                            try:
+                                pil_img = Image.open(io.BytesIO(img_bytes))
+                                image_list.append(pil_img.convert("RGB"))
+                            except Exception:
+                                # Ignore corrupted images
+                                pass
+        return image_list
 
-        return images
-
-    result = {}
-
-    # Auto-detect format based on available fields
-    if "prompt" in example and "chosen" in example and "rejected" in example:
-        # Preference format (DPO)
-        prompt_messages = example["prompt"]
-        images = extract_images(prompt_messages)
-        result["prompt"] = tokenizer.apply_chat_template(
-            prompt_messages, add_generation_prompt=True, tokenize=False
-        )
-        if images:
-            result["image"] = images[0]  # DPO typically uses single image
-
-        # These assistant messages are text only
-        result["chosen"] = tokenizer.apply_chat_template(
-            example["chosen"], add_generation_prompt=False, tokenize=False
-        )
-        result["rejected"] = tokenizer.apply_chat_template(
-            example["rejected"], add_generation_prompt=False, tokenize=False
-        )
-
+    if all(k in example for k in ("prompt", "chosen", "rejected")):
+        # in DPOTrainer._prepare_dataset the _process_row requires the "images" field
+        # It then handles all chat template and tokenization automatically for all three columns
+        # see trl.maybe_apply_chat_template for details
+        example["images"] = get_images_from_prompt(example.get("prompt"))
     elif "prompt" in example:
-        # Prompt-only format (GRPO)
-        prompt_messages = example["prompt"]
-        images = extract_images(prompt_messages)
-
-        # Apply chat template, this includes both type text and image
-        result["prompt"] = tokenizer.apply_chat_template(
-            prompt_messages, add_generation_prompt=True, tokenize=False
-        )
-        if images:
-            result["image"] = images[0]  # GRPO typically uses single image
-
-        # Copy over all other fields (answer, reasoning, etc.)
-        for key, value in example.items():
-            if key != "prompt":
-                result[key] = value
-
+        # GRPOTrainer._generate_and_score_completions will look for "image", then apply chat template with tokenization
+        # then it will handle image processing using self.processing_class and the prompt_text:
+        images = get_images_from_prompt(example.get("prompt"))
+        example["image"] = images[0] if images else None
     else:
         raise ValueError(
             "Example must contain 'prompt' field (for GRPO) or 'prompt', 'chosen', and 'rejected' fields (for DPO)"
         )
 
-    return result
+    return example
 
 
 class HuggingFaceTrainingService(BaseTrainingService):
@@ -397,17 +382,9 @@ class HuggingFaceTrainingService(BaseTrainingService):
         if modality == "vision" and trainer_type in ["dpo", "grpo"]:
             # Convert vision datasets to the format expected by GRPO/DPO trainers and they will handle processing
             # NOTE: do not use batching here since it will make each column a list and break the format function
-            train_ds = train_ds.map(
-                lambda example: _reformat_vision_dataset(
-                    example, tokenizer_or_processor
-                )
-            )
+            train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
             if eval_ds is not None:
-                eval_ds = eval_ds.map(
-                    lambda example: _reformat_vision_dataset(
-                        example, tokenizer_or_processor
-                    )
-                )
+                eval_ds = eval_ds.map(lambda example: _reformat_vision_dataset(example))
 
         return train_ds, eval_ds
 
@@ -607,6 +584,7 @@ class UnslothTrainingService(BaseTrainingService):
             standardize_data_formats,
             train_on_responses_only,
         )
+        from unsloth import PatchDPOTrainer
         from trl import (
             SFTConfig,
             SFTTrainer,
@@ -623,6 +601,7 @@ class UnslothTrainingService(BaseTrainingService):
         self.standardize_data_formats = standardize_data_formats
         self.train_on_responses_only = train_on_responses_only
         self.UnslothVisionDataCollator = UnslothVisionDataCollator
+        self.PatchDPOTrainer = PatchDPOTrainer
         self.SFTConfig = SFTConfig
         self.SFTTrainer = SFTTrainer
         self.GRPOConfig = GRPOConfig
@@ -722,17 +701,9 @@ class UnslothTrainingService(BaseTrainingService):
             )
         # Convert vision datasets to the format expected by GRPO/DPO trainers
         elif modality == "vision" and trainer_type in ["dpo", "grpo"]:
-            train_ds = train_ds.map(
-                lambda example: _reformat_vision_dataset(
-                    example, tokenizer_or_processor
-                )
-            )
+            train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
             if eval_ds is not None:
-                eval_ds = eval_ds.map(
-                    lambda example: _reformat_vision_dataset(
-                        example, tokenizer_or_processor
-                    )
-                )
+                eval_ds = eval_ds.map(lambda example: _reformat_vision_dataset(example))
 
         return train_ds, eval_ds
 
@@ -861,6 +832,7 @@ class UnslothTrainingService(BaseTrainingService):
                 reward_funcs=reward_funcs,
             )
         elif trainer_type == "dpo":
+            self.PatchDPOTrainer()
             return self.DPOTrainer(**base_trainer_args)
         else:
             raise ValueError(f"Unsupported trainer type: {trainer_type}")
