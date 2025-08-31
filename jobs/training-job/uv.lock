@@ -438,7 +438,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.4.0" },
-    { name = "bitsandbytes", specifier = "==0.45.3" },
+    { name = "bitsandbytes", specifier = ">=0.45.3" },
     { name = "datasets", specifier = ">=3.4.1" },
     { name = "fastapi", specifier = "==0.104.1" },
     { name = "google-cloud-firestore", specifier = ">=2.11.0" },

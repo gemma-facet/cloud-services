@@ -11,7 +11,7 @@ import re
 import logging
 import os
 import numpy as np
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Callable, Optional, Union
 from functools import partial
 from google import genai
 from rouge_score import rouge_scorer
@@ -32,6 +32,33 @@ from schema import (
 
 
 # --- Built-in Reward Functions ---
+
+
+def _get_completion_text(
+    completion: Union[str, List[str], List[Dict[str, str]]],
+) -> str:
+    """
+    Safely extracts the string content from a model completion which can be in various formats.
+
+    I saw that on TRL docs sometimes completion is ["response text"] and sometimes it is
+    [{"role": "assistant", "content": "response text"}].
+
+    Completions is always List[completion] but completion itself has different formats.
+
+    I believe this depends on the prompt / chat template and should always be ChatML (second) for Gemma,
+    but let's just handle both for safety
+    """
+    if isinstance(completion, str):
+        return completion
+    # Handle ChatML format: e.g., [{"role": "assistant", "content": "..."}]
+    if isinstance(completion, list):
+        return _get_completion_text(completion[0]) if completion else ""
+    if isinstance(completion, dict):
+        return completion.get("content", "")
+    # Return empty string for unknown or empty formats
+    return ""
+
+
 # These functions requires the system prompt to instruct the model to output in a certain format
 # This is usually a XML based format with <reasoning> and <answer> tags
 # You should provide these tags in the configurations so we can adapt to parse them properly
@@ -73,13 +100,19 @@ def extract_answer_from_dataset(text: str) -> str:
 
 
 def expression_accuracy_reward(
-    completions: List[str], solution: List[str], **kwargs
+    completions, solution, **kwargs
 ) -> List[Optional[float]]:
     """
     Verifies mathematical expressions against a solution.
     Requires the math-verify package.
     You should ensure that the model outputs valid LaTeX expressions, otherwise it defaults to simple text comparison.
+
+    NOTE: This also requires a "solution" column in the dataset, otherwise it will just fail
+    If you want a more flexible option, just use the text_similarity_reward with {{sample.solution_column_name}} as template
     """
+    if not solution:
+        logging.warning("No solution provided for expression accuracy reward.")
+        return [0.0] * len(completions)
     try:
         from math_verify import LatexExtractionConfig, parse, verify
         from latex2sympy2_extended import NormalizationConfig
@@ -95,11 +128,12 @@ def expression_accuracy_reward(
     for completion, sol in zip(completions, solution):
         reward = None
         try:
+            completion_text = _get_completion_text(completion)
             if math_verify_available:
                 gold_parsed = parse(sol, extraction_mode="first_match") if sol else []
                 if gold_parsed:
                     answer_parsed = parse(
-                        completion,
+                        completion_text,
                         extraction_config=[
                             LatexExtractionConfig(
                                 normalization_config=NormalizationConfig(
@@ -117,23 +151,29 @@ def expression_accuracy_reward(
                     )
                     reward = float(verify(gold_parsed, answer_parsed))
                 else:
-                    reward = float(completion.strip().lower() == sol.strip().lower())
+                    reward = float(
+                        completion_text.strip().lower() == sol.strip().lower()
+                    )
             else:
-                reward = float(completion.strip().lower() == sol.strip().lower())
+                reward = float(completion_text.strip().lower() == sol.strip().lower())
         except Exception as e:
-            logging.debug(
-                f"Math verification failed for completion '{completion}': {e}"
+            logging.warning(
+                f"Math verification failed for completion '{completion_text}': {e}"
             )
         rewards.append(reward)
     return rewards
 
 
 def numerical_accuracy_reward(
-    completions: List[str], solution: List[str], answer_tag: str = "answer", **kwargs
+    completions, solution, answer_tag="answer", **kwargs
 ) -> List[Optional[float]]:
     """
     Verifies a numerical answer by extracting it from the XML tags and extracting the ground truth from the dataset.
+    NOTE: This is a little bit brittle especially it requires a "solution" column otherwise it will just fail
     """
+    if not solution:
+        logging.warning("No solution provided for numerical accuracy reward.")
+        return [0.0] * len(completions)
 
     def _normalize_and_compare(model_ans: str, gt_ans: str) -> bool:
         model_ans_norm, gt_ans_norm = (
@@ -150,11 +190,16 @@ def numerical_accuracy_reward(
     rewards = []
     for completion, sol in zip(completions, solution):
         try:
+            # Safely extract the completion string from the potentially complex structure
+            completion_text = _get_completion_text(completion)
             model_answer, gt_answer = (
-                extract_xml_answer(completion, answer_tag=answer_tag),
+                extract_xml_answer(completion_text, answer_tag=answer_tag),
                 extract_answer_from_dataset(sol),
             )
             rewards.append(float(_normalize_and_compare(model_answer, gt_answer)))
+            # logging.info(
+            #     f"Model answer: '{model_answer}' | Ground truth: '{gt_answer}' | Reward: {rewards[-1]}"
+            # )
         except Exception as e:
             logging.warning(f"Error in numerical accuracy reward: {e}")
             rewards.append(0.0)
@@ -165,7 +210,8 @@ def format_reward_func(
     completions, think_tag="reasoning", answer_tag="answer", **kwargs
 ) -> list[float]:
     """
-    Versatile reward function to check if the model output matches a specific XML format."""
+    Versatile reward function to check if the model output matches a specific XML format.
+    """
     pattern = (
         rf"^<{think_tag}>\n.*?\n</{think_tag}>\n<{answer_tag}>\n.*?\n</{answer_tag}>\n$"
     )
@@ -174,19 +220,21 @@ def format_reward_func(
     return [0.5 if match else 0.0 for match in matches]
 
 
-def count_xml(text, think_tag="reasoning", answer_tag="answer") -> float:
+def count_xml(completions, think_tag="reasoning", answer_tag="answer") -> float:
     """Function to count specific XML tokens and award a small reward for each."""
     count = 0.0
-    if text.count(f"<{think_tag}>\n") == 1:
-        count += 0.125
-    if text.count(f"\n</{think_tag}>\n") == 1:
-        count += 0.125
-    if text.count(f"\n<{answer_tag}>\n") == 1:
-        count += 0.125
-        count -= len(text.split(f"\n</{answer_tag}>\n")[-1]) * 0.001
-    if text.count(f"\n</{answer_tag}>") == 1:
-        count += 0.125
-        count -= (len(text.split(f"\n</{answer_tag}>")[-1]) - 1) * 0.001
+    for completion in completions:
+        text = _get_completion_text(completion)
+        if text.count(f"<{think_tag}>\n") == 1:
+            count += 0.125
+        if text.count(f"\n</{think_tag}>\n") == 1:
+            count += 0.125
+        if text.count(f"\n<{answer_tag}>\n") == 1:
+            count += 0.125
+            count -= len(text.split(f"\n</{answer_tag}>\n")[-1]) * 0.001
+        if text.count(f"\n</{answer_tag}>") == 1:
+            count += 0.125
+            count -= (len(text.split(f"\n</{answer_tag}>")[-1]) - 1) * 0.001
     return count
 
 
@@ -259,7 +307,7 @@ def _call_gemini_grader(
     model: str,
     message: str,
     system_prompt: Optional[str] = None,
-    schema: Optional[Dict[str, Any]] = None,
+    schema: Optional[Any] = None,
     api_key: Optional[str] = None,
 ):
     """
@@ -269,33 +317,37 @@ def _call_gemini_grader(
         model (str): The Gemini model to use for grading.
         message (str): The user prompt or message to send to the model.
         system_prompt (Optional[str]): An optional system prompt to guide the model's behavior.
-        schema (Optional[Dict[str, Any]]): An optional JSON schema to enforce structured responses.
+        schema (Optional[Any]): An optional Pydantic model to enforce structured responses.
         api_key (Optional[str]): An optional API key for Gemini, if not provided, it will use the environment variable.
 
     Returns:
-        The response in the format specified by the schema, or an empty string on failure.
+        The full response object from the API, or None on failure.
     """
     _ensure_genai_configured(api_key)
     if not _genai_client:
-        return ""
+        return None
     try:
+        generation_config = {}
+        if system_prompt:
+            generation_config["system_instruction"] = system_prompt
+        if schema:
+            generation_config["response_mime_type"] = "application/json"
+            generation_config["response_schema"] = schema
+
         response = _genai_client.models.generate_content(
             model=model,
             contents=[message],
-            config={
-                "system_instruction": system_prompt,
-                "response_schema": schema,
-            },
+            config=generation_config,
         )
-        logging.debug(f"Gemini grader response: {response}")
+        # logging.info(f"Gemini grader response: {response}")
         return response
     except Exception as e:
         logging.error(f"Error calling Gemini API: {e}")
-        return ""
+        return None
 
 
 def string_check_reward(
-    config: StringCheckRewardConfig, completions: List[str], **kwargs
+    config: StringCheckRewardConfig, completions, **kwargs
 ) -> List[float]:
     """
     Calculates reward based on simple string comparisons.
@@ -310,14 +362,15 @@ def string_check_reward(
         "ilike": lambda c, r: r.lower() in c.lower(),
     }
     op = op_map[config.operation]
+    completion_texts = [_get_completion_text(c) for c in completions]
     return [
         1.0 if op(comp, ref) else 0.0
-        for comp, ref in zip(completions, reference_values)
+        for comp, ref in zip(completion_texts, reference_values)
     ]
 
 
 def text_similarity_reward(
-    config: TextSimilarityRewardConfig, completions: List[str], **kwargs
+    config: TextSimilarityRewardConfig, completions, **kwargs
 ) -> List[float]:
     """
     Calculates reward based on various text similarity metrics.
@@ -329,13 +382,14 @@ def text_similarity_reward(
     rewards = []
     for comp, ref in zip(completions, reference_values):
         score = 0.0
+        completion_text = _get_completion_text(comp)
         if metric == "cosine":
             _ensure_genai_configured(config.gemini_api_key)
             if _genai_client:
                 try:
                     # Generate embeddings
                     comp_emb = _genai_client.models.embed_content(
-                        model=config.embedding_model, content=comp
+                        model=config.embedding_model, content=completion_text
                     )["embeddings"]
                     ref_emb = _genai_client.models.embed_content(
                         model=config.embedding_model, content=ref
@@ -347,7 +401,7 @@ def text_similarity_reward(
                 except Exception as e:
                     logging.error(f"Cosine similarity failed: {e}")
         else:
-            comp_tokens, ref_tokens = comp.split(), ref.split()
+            comp_tokens, ref_tokens = completion_text.split(), ref.split()
             if metric == "bleu":
                 score = sentence_bleu([ref_tokens], comp_tokens)
             elif metric == "gleu":
@@ -357,7 +411,7 @@ def text_similarity_reward(
             elif metric.startswith("rouge"):
                 score = (
                     rouge_scorer.RougeScorer([metric], use_stemmer=True)
-                    .score(ref, comp)[metric]
+                    .score(ref, completion_text)[metric]
                     .fmeasure
                 )
             # We can support other metrics if possible, but for GLEU and cosine are the best
@@ -398,7 +452,7 @@ class LabelModelResponse(BaseModel):
 
 def score_model_reward(
     config: ScoreModelRewardConfig,
-    completions: List[str],
+    completions,
     **kwargs,
 ) -> List[float]:
     """
@@ -427,24 +481,25 @@ def score_model_reward(
             and hasattr(values, "__len__")
             and len(values) == len(completions)
         }
-        user_prompt = _resolve_template(config.prompt, completion, current_sample)
+        completion_text = _get_completion_text(completion)
+        user_prompt = _resolve_template(config.prompt, completion_text, current_sample)
 
-        response_text = _call_gemini_grader(
+        response = _call_gemini_grader(
             config.model,
             user_prompt,
             system_prompt,
-            ScoreModelResponse.model_json_schema(),
+            ScoreModelResponse,
             api_key=config.gemini_api_key,
         )
         score = 0.0
         try:
-            parsed_response = ScoreModelResponse.model_validate_json(response_text)
-            score = parsed_response.score
-            if config.range:
-                score = max(config.range[0], min(score, config.range[1]))
+            if response and response.parsed:
+                score = response.parsed.score
+                if config.range:
+                    score = max(config.range[0], min(score, config.range[1]))
         except Exception as e:
             logging.warning(
-                f"Failed to parse score model judge response: {e}\nResponse was: {response_text}"
+                f"Failed to parse score model judge response: {e}\nResponse was: {response.text if response else 'None'}"
             )
         rewards.append(score)
     return rewards
@@ -452,7 +507,7 @@ def score_model_reward(
 
 def label_model_reward(
     config: LabelModelRewardConfig,
-    completions: List[str],
+    completions,
     **kwargs,
 ) -> List[float]:
     """
@@ -472,34 +527,33 @@ def label_model_reward(
             and hasattr(values, "__len__")
             and len(values) == len(completions)
         }
-        user_prompt = _resolve_template(config.prompt, completion, current_sample)
+        completion_text = _get_completion_text(completion)
+        user_prompt = _resolve_template(config.prompt, completion_text, current_sample)
 
-        response_text = _call_gemini_grader(
+        response = _call_gemini_grader(
             config.model,
             user_prompt,
             system_prompt,
-            LabelModelResponse.model_json_schema(),
+            LabelModelResponse,
             api_key=config.gemini_api_key,
         )
         score = 0.0
         try:
-            parsed_response = LabelModelResponse.model_validate_json(response_text)
-            if parsed_response.label in config.passing_labels:
+            if (
+                response
+                and response.parsed
+                and response.parsed.label in config.passing_labels
+            ):
                 score = 1.0
         except Exception as e:
             logging.warning(
-                f"Failed to parse label model judge response: {e}\nResponse was: {response_text}"
+                f"Failed to parse label model judge response: {e}\nResponse was: {response.text if response else 'None'}"
             )
         rewards.append(score)
     return rewards
 
 
-@NotImplementedError(
-    "Executing python reward functions is not supported since it requires sandboxing."
-)
-def python_reward(
-    config: PythonRewardConfig, completions: List[str], **kwargs
-) -> List[float]:
+def python_reward(config: PythonRewardConfig, completions, **kwargs) -> List[float]:
     """Placeholder for executing custom Python code."""
     logging.warning(
         f"Python grader '{config.name}' is a placeholder and will return 0.0 for all samples."
@@ -547,7 +601,7 @@ class RulerBatchResponse(BaseModel):
 
 def ruler_reward(
     config: RulerRewardConfig,
-    completions: List[str],
+    completions,
     **kwargs,
 ) -> List[float]:
     """
@@ -578,7 +632,10 @@ def ruler_reward(
     # Prepare the single prompt with all completions
     completions_text = []
     for i, completion in enumerate(completions):
-        completions_text.append(f'<completion id="{i}">\n{completion}\n</completion>')
+        completion_text = _get_completion_text(completion)
+        completions_text.append(
+            f'<completion id="{i}">\n{completion_text}\n</completion>'
+        )
 
     user_prompt = f"""Please evaluate the following responses based on these rules:
 
@@ -589,38 +646,38 @@ def ruler_reward(
     {chr(10).join(completions_text)}
     """
 
-    response_text = _call_gemini_grader(
+    response = _call_gemini_grader(
         config.model,
         user_prompt,
         RULER_SYSTEM_PROMPT,
-        RulerBatchResponse.model_json_schema(),
+        RulerBatchResponse,
         api_key=config.gemini_api_key,
     )
 
     # Initialize rewards with a default of 0.0
     rewards = [0.0] * len(completions)
     try:
-        parsed_response = RulerBatchResponse.model_validate_json(response_text)
-
-        if len(parsed_response.scores) != len(completions):
-            logging.warning(
-                f"RULER judge returned a different number of scores ({len(parsed_response.scores)}) than completions ({len(completions)})."
-            )
-
-        for score_obj in parsed_response.scores:
-            comp_id = score_obj.completion_id
-            if 0 <= comp_id < len(rewards):
-                # Ensure score is within the valid range
-                score = max(0.0, min(score_obj.score, 1.0))
-                rewards[comp_id] = score
-            else:
+        if response and response.parsed:
+            parsed_response = response.parsed
+            if len(parsed_response.scores) != len(completions):
                 logging.warning(
-                    f"RULER judge returned an invalid completion_id: {comp_id}"
+                    f"RULER judge returned a different number of scores ({len(parsed_response.scores)}) than completions ({len(completions)})."
                 )
+
+            for score_obj in parsed_response.scores:
+                comp_id = score_obj.completion_id
+                if 0 <= comp_id < len(rewards):
+                    # Ensure score is within the valid range
+                    score = max(0.0, min(score_obj.score, 1.0))
+                    rewards[comp_id] = score
+                else:
+                    logging.warning(
+                        f"RULER judge returned an invalid completion_id: {comp_id}"
+                    )
 
     except Exception as e:
         logging.warning(
-            f"Failed to parse RULER judge batch response: {e}\nResponse was: {response_text}"
+            f"Failed to parse RULER judge batch response: {e}\nResponse was: {response.text if response else 'None'}"
         )
 
     return rewards
@@ -660,9 +717,12 @@ def load_reward_functions_from_config(
             func = GRADER_DISPATCHER["built_in"].get(config.function_name)
             if func:
                 if config.parameters:
-                    graders.append(
-                        partial(func, **config.parameters.model_dump(exclude_none=True))
+                    partial_func = partial(
+                        func, **config.parameters.model_dump(exclude_none=True)
                     )
+                    # GRPOTrainer requires all reward functions to have name for tracking
+                    partial_func.__name__ = config.name
+                    graders.append(partial_func)
                 else:
                     graders.append(func)
                 logging.info(
@@ -671,7 +731,9 @@ def load_reward_functions_from_config(
         else:
             func = GRADER_DISPATCHER.get(config.type)
             if func:
-                graders.append(partial(func, config))
+                partial_func = partial(func, config)
+                partial_func.__name__ = config.name
+                graders.append(partial_func)
                 logging.info(
                     f"Loaded grader-style reward function: type='{config.type}', name='{config.name}'"
                 )
