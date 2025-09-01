@@ -5,6 +5,7 @@ from typing import Literal, Optional
 class ExportRequest(BaseModel):
     job_id: str
     export_type: Literal["adapter", "merged", "gguf"]
+    hf_token: Optional[str] = None
 
 
 class ExportResponse(BaseModel):
