@@ -1,8 +1,9 @@
 import os
 import logging
-import json
-import base64
-from fastapi import FastAPI, HTTPException, Depends, Request
+import firebase_admin
+from firebase_admin import auth
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.concurrency import run_in_threadpool
 from google.cloud import firestore
 from huggingface_hub import login
@@ -28,6 +29,15 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+# Initialize Firebase Admin SDK
+# This will use the GOOGLE_APPLICATION_CREDENTIALS environment variable
+# or the default service account when running in a Google Cloud environment.
+try:
+    firebase_admin.initialize_app()
+    logging.info("✅ Firebase Admin SDK initialized successfully")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase Admin SDK: {e}")
+
 # Initialize Firestore client
 project_id = os.getenv("PROJECT_ID")
 if not project_id:
@@ -44,49 +54,46 @@ async def health_check():
     return {"status": "healthy", "service": "inference"}
 
 
-# Auth dependency for API Gateway
-def get_current_user_id(request: Request) -> str:
+# Security scheme for Bearer token
+bearer_scheme = HTTPBearer()
+
+
+def get_current_user_id(
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> str:
     """
-    Extract user ID from X-Apigateway-Api-Userinfo header set by API Gateway.
-    The gateway requires the JWT to contain iss (issuer), sub (subject), aud (audience), iat (issued at), exp (expiration time) claims
-    API Gateway will send the authentication result in the X-Apigateway-Api-Userinfo to the backend API whcih contains the base64url encoded content of the JWT payload.
-    In this case, the gateway will override the original Authorization header with this X-Apigateway-Api-Userinfo header.
+    Verify Firebase ID token and extract user ID (uid).
+    This function is a FastAPI dependency that can be used to protect endpoints.
 
     Args:
-        request: FastAPI Request object containing headers
+        token: The HTTPAuthorizationCredentials containing the bearer token.
 
     Returns:
-        str: User ID extracted from JWT claims
+        str: The user's unique ID (uid) from the verified Firebase token.
 
     Raises:
-        HTTPException: 401 if userinfo header is missing or invalid
+        HTTPException: 401 if the token is missing, invalid, or expired.
     """
-    userinfo_header = request.headers.get("X-Apigateway-Api-Userinfo")
-    if not userinfo_header:
+    if not token:
         raise HTTPException(
             status_code=401,
-            detail="Missing authentication userinfo. Ensure requests go through API Gateway.",
+            detail="Bearer token not provided",
         )
-
     try:
-        # Decode base64url encoded JWT payload
-        # Add padding if needed for proper base64 decoding
-        missing_padding = len(userinfo_header) % 4
-        if missing_padding:
-            userinfo_header += "=" * (4 - missing_padding)
-
-        decoded_bytes = base64.urlsafe_b64decode(userinfo_header)
-        claims = json.loads(decoded_bytes.decode("utf-8"))
-
-        user_id = claims.get("sub")
+        # Verify the token against the Firebase Auth API.
+        decoded_token = auth.verify_id_token(token.credentials)
+        user_id = decoded_token.get("uid")
         if not user_id:
-            raise HTTPException(
-                status_code=401, detail="User ID not found in authentication claims"
-            )
+            raise HTTPException(status_code=401, detail="User ID not found in token")
         return user_id
-    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError) as e:
+    except auth.ExpiredIdTokenError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except auth.InvalidIdTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during token verification: {e}")
         raise HTTPException(
-            status_code=401, detail=f"Invalid authentication userinfo format: {str(e)}"
+            status_code=500, detail="Internal server error during authentication"
         )
 
 
