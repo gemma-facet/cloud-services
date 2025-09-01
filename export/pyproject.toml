@@ -1,7 +1,7 @@
 [project]
 name = "export"
 version = "0.1.0"
-description = "Add your description here"
+description = "Export service for fine-tuned Gemma models"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,6 +11,7 @@ dependencies = [
     "peft>=0.17.1",
     "pydantic>=2.11.7",
     "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.20",
     "transformers>=4.56.0",
     "unsloth>=2025.8.10",
     "uvicorn>=0.35.0",
