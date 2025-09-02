@@ -6,7 +6,7 @@ from google.cloud import firestore
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.concurrency import run_in_threadpool
-from schema import ExportRequest, ExportResponse
+from schema import ExportRequest, ExportResponse, ExportInfo
 from huggingface_hub import login
 from typing import Optional
 from utils import export_utils
@@ -149,8 +149,10 @@ async def export(
             return ExportResponse(
                 success=True,
                 job_id=request.job_id,
-                export_type=request.export_type,
-                adapter_path=adapter_path,
+                export=ExportInfo(
+                    type=request.export_type,
+                    path=adapter_path,
+                ),
             )
         else:
             logging.warning(f"Adapter path not found for job {request.job_id}")
@@ -168,8 +170,10 @@ async def export(
             return ExportResponse(
                 success=True,
                 job_id=request.job_id,
-                export_type=request.export_type,
-                merged_path=merged_path,
+                export=ExportInfo(
+                    type=request.export_type,
+                    path=merged_path,
+                ),
             )
         else:
             logging.info(f"Creating merged model for job {request.job_id}")
@@ -203,8 +207,10 @@ async def export(
                 return ExportResponse(
                     success=True,
                     job_id=request.job_id,
-                    export_type=request.export_type,
-                    merged_path=merged_path,
+                    export=ExportInfo(
+                        type=request.export_type,
+                        path=merged_path,
+                    ),
                 )
 
             except Exception as e:
@@ -224,8 +230,10 @@ async def export(
             return ExportResponse(
                 success=True,
                 job_id=request.job_id,
-                export_type=request.export_type,
-                gguf_path=gguf_path,
+                export=ExportInfo(
+                    type=request.export_type,
+                    path=gguf_path,
+                ),
             )
         else:
             logging.info(f"Starting GGUF conversion for job {request.job_id}")
@@ -290,8 +298,10 @@ async def export(
                 return ExportResponse(
                     success=True,
                     job_id=request.job_id,
-                    export_type=request.export_type,
-                    gguf_path=gguf_path,
+                    export=ExportInfo(
+                        type=request.export_type,
+                        path=gguf_path,
+                    ),
                 )
 
             except Exception as e:
