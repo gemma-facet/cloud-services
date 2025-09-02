@@ -1,5 +1,7 @@
 import os
 import logging
+import tempfile
+import shutil
 from typing import Optional
 from google.cloud import storage, firestore
 
@@ -25,6 +27,71 @@ class ModelExportUtils:
         )
 
         self.logger = logging.getLogger(__name__)
+
+    def _download_adapter_from_public_url(self, model_id: str) -> str:
+        """
+        Download entire adapter folder from Google Cloud Storage to a temporary local directory.
+
+        Args:
+            model_id: The model ID (job_id) to download
+
+        Returns:
+            str: Local path to the downloaded adapter directory
+
+        Raises:
+            Exception: If download fails
+        """
+        try:
+            # Create temporary directory for the adapter
+            temp_dir = tempfile.mkdtemp(prefix=f"adapter_{model_id}_")
+            self.logger.info(f"Downloading adapter for model {model_id} to {temp_dir}")
+
+            # Use Google Cloud Storage client to download the entire folder
+            bucket_name = "gemma-export-bucket"
+            source_folder = f"trained_adapters/{model_id}/"
+
+            # List all blobs in the adapter folder
+            blobs = self.storage_client.list_blobs(bucket_name, prefix=source_folder)
+
+            downloaded_files = []
+
+            for blob in blobs:
+                # Remove folder prefix from file path
+                relative_path = blob.name[len(source_folder) :].lstrip("/")
+
+                # Skip empty paths (directory placeholders)
+                if not relative_path:
+                    continue
+
+                local_path = os.path.join(temp_dir, relative_path)
+
+                # Make sure local directories exist
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+                # Skip "directory" placeholders (blobs ending with "/")
+                if not blob.name.endswith("/"):
+                    blob.download_to_filename(local_path)
+                    downloaded_files.append(relative_path)
+                    self.logger.info(f"Downloaded {blob.name} to {local_path}")
+
+            if not downloaded_files:
+                raise Exception(
+                    f"No files found in adapter directory for model {model_id}"
+                )
+
+            self.logger.info(
+                f"Successfully downloaded adapter for model {model_id} with {len(downloaded_files)} files"
+            )
+            return temp_dir
+
+        except Exception as e:
+            # Clean up temp directory on failure
+            if "temp_dir" in locals() and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            self.logger.error(
+                f"Failed to download adapter for model {model_id}: {str(e)}"
+            )
+            raise Exception(f"Adapter download failed: {str(e)}")
 
     def _get_backend_provider(self, base_model_id: str) -> str:
         """
@@ -53,7 +120,7 @@ class ModelExportUtils:
         Merge the adapter with the base model and upload to Google Cloud Storage.
 
         Args:
-            adapter_path: Path to the trained adapter
+            adapter_path: Path to the trained adapter (GCS path or model_id)
             base_model_id: ID of the base model (e.g., "google/gemma-2-9b")
             job_id: Job ID for tracking and database updates
             hf_token: Hugging Face token for accessing gated models
@@ -65,10 +132,35 @@ class ModelExportUtils:
         Raises:
             Exception: If merging or upload fails
         """
+        local_adapter_path = None
         try:
             self.logger.info(f"Starting model merge for job {job_id}")
             self.logger.info(f"Adapter path: {adapter_path}")
             self.logger.info(f"Base model: {base_model_id}")
+
+            # Extract model_id from adapter_path if it's a GCS path
+            if adapter_path.startswith("gs://"):
+                # Extract job_id from GCS path like gs://bucket/trained_adapters/job_id/
+                path_parts = adapter_path.rstrip("/").split("/")
+                if len(path_parts) < 2:
+                    raise ValueError(f"Invalid GCS path format: {adapter_path}")
+                model_id = path_parts[-1]  # Last part should be the job_id
+                self.logger.info(f"Extracted model_id from GCS path: {model_id}")
+            else:
+                # Assume adapter_path is already the model_id
+                model_id = adapter_path
+                self.logger.info(f"Using adapter_path as model_id: {model_id}")
+
+            # Validate model_id
+            if not model_id or not model_id.strip():
+                raise ValueError(
+                    f"Invalid model_id extracted from adapter_path: {adapter_path}"
+                )
+
+            # Download adapter from public URL
+            self.logger.info(f"Downloading adapter for model {model_id}")
+            local_adapter_path = self._download_adapter_from_public_url(model_id)
+            self.logger.info(f"Downloaded adapter to local path: {local_adapter_path}")
 
             backend_provider = self._get_backend_provider(base_model_id)
             self.logger.info(f"Backend provider: {backend_provider}")
@@ -84,11 +176,15 @@ class ModelExportUtils:
             if backend_provider == "unsloth":
                 from unsloth import FastModel
 
+                logging.info("Loading adapter model from Unsloth")
+
                 model, tokenizer = FastModel.from_pretrained(
-                    model_name=adapter_path,
+                    model_name=local_adapter_path,
                     max_seq_length=2048,
                     load_in_4bit=True,
                 )
+
+                logging.info("Merging model with Unsloth")
 
                 model.save_pretrained_merged(
                     "merged_model", tokenizer, save_method="merged_16bit"
@@ -99,7 +195,7 @@ class ModelExportUtils:
                 from peft import PeftModel
 
                 base_model = AutoModelForCausalLM.from_pretrained(base_model_id)
-                model = PeftModel.from_pretrained(base_model, adapter_path)
+                model = PeftModel.from_pretrained(base_model, local_adapter_path)
                 merged_model = model.merge_and_unload()
                 merged_model.save_pretrained("merged_model", safe_serialization=True)
 
@@ -128,6 +224,13 @@ class ModelExportUtils:
         except Exception as e:
             self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
             raise Exception(f"Model merging failed: {str(e)}")
+        finally:
+            # Always clean up the downloaded adapter files
+            if local_adapter_path and os.path.exists(local_adapter_path):
+                self.logger.info(
+                    f"Cleaning up downloaded adapter files: {local_adapter_path}"
+                )
+                shutil.rmtree(local_adapter_path, ignore_errors=True)
 
     def _convert_to_gguf(
         self,
