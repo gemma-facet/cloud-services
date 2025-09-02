@@ -67,15 +67,10 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
             AutoModelForImageTextToText,
             AutoTokenizer,
         )
-        from transformers.utils.quantization_config import BitsAndBytesConfig
 
         # Model configuration
+        # NOTE: Does not need quantization_config because saved models already have one
         model_kwargs = get_model_device_config()
-        model_kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-        )
 
         # Load appropriate model class based on base model
         if base_model_id in ["google/gemma-3-1b-it", "google/gemma-3-1b-pt"]:

@@ -1,4 +1,5 @@
 import logging
+import math
 from enum import Enum
 from typing import Optional, Dict, Any
 from google.cloud import firestore
@@ -106,6 +107,9 @@ class JobStateManager:
         if not job:
             return None
 
+        # Metrics contain numerical values and they might be nan but JSON response does not support these values
+        metrics = self._sanitize_metrics(job.metrics) if job.metrics else None
+
         status_dict = {
             "job_id": job.job_id,
             "job_name": job.job_name,
@@ -117,7 +121,7 @@ class JobStateManager:
             "base_model_id": job.base_model_id,
             "adapter_path": job.adapter_path,
             "wandb_url": job.wandb_url,
-            "metrics": job.metrics,
+            "metrics": metrics,
             "error": job.error,
             "gguf_path": job.gguf_path,
         }
@@ -254,3 +258,18 @@ class JobStateManager:
         except Exception as e:
             self.logger.error(f"Failed to verify job ownership for {job_id}: {e}")
             return False
+
+    def _sanitize_metrics(self, metrics):
+        """
+        Recursively sanitize metrics dict, replacing NaN/Infinity with None.
+        """
+        if isinstance(metrics, dict):
+            return {k: self._sanitize_metrics(v) for k, v in metrics.items()}
+        elif isinstance(metrics, list):
+            return [self._sanitize_metrics(v) for v in metrics]
+        elif isinstance(metrics, float):
+            if math.isnan(metrics) or math.isinf(metrics):
+                return None
+            return metrics
+        else:
+            return metrics
