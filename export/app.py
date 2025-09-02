@@ -1,9 +1,10 @@
 import logging
 import os
-import json
-import base64
+import firebase_admin
+from firebase_admin import auth
 from google.cloud import firestore
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.concurrency import run_in_threadpool
 from schema import ExportRequest, ExportResponse
 from huggingface_hub import login
@@ -21,6 +22,13 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+try:
+    firebase_admin.initialize_app()
+    logging.info("✅ Firebase initialized")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase: {e}")
+    raise
+
 # Initialize Firestore client
 project_id = os.getenv("PROJECT_ID")
 if not project_id:
@@ -30,49 +38,40 @@ db = firestore.Client(project=project_id)
 logging.info("✅ Export service ready")
 
 
-# Auth dependency for API Gateway
-def get_current_user_id(request: Request) -> str:
+bearer_scheme = HTTPBearer()
+
+
+def get_current_user_id(
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> str:
     """
-    Extract user ID from X-Apigateway-Api-Userinfo header set by API Gateway.
-    The gateway requires the JWT to contain iss (issuer), sub (subject), aud (audience), iat (issued at), exp (expiration time) claims
-    API Gateway will send the authentication result in the X-Apigateway-Api-Userinfo to the backend API whcih contains the base64url encoded content of the JWT payload.
-    In this case, the gateway will override the original Authorization header with this X-Apigateway-Api-Userinfo header.
+    Verify Firebase ID token and extract use ID (uid).
 
     Args:
-        request: FastAPI Request object containing headers
+        token: HTTPAuthorizationCredentials object containing the bearer token
 
     Returns:
-        str: User ID extracted from JWT claims
+        str: User ID extracted from the token
 
     Raises:
-        HTTPException: 401 if userinfo header is missing or invalid
+        HTTPException: 401 if the token is invalid or expired
     """
-    userinfo_header = request.headers.get("X-Apigateway-Api-Userinfo")
-    if not userinfo_header:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing authentication userinfo. Ensure requests go through API Gateway.",
-        )
-
     try:
-        # Decode base64url encoded JWT payload
-        # Add padding if needed for proper base64 decoding
-        missing_padding = len(userinfo_header) % 4
-        if missing_padding:
-            userinfo_header += "=" * (4 - missing_padding)
-
-        decoded_bytes = base64.urlsafe_b64decode(userinfo_header)
-        claims = json.loads(decoded_bytes.decode("utf-8"))
-
-        user_id = claims.get("sub")
+        decoded_token = auth.verify_id_token(token.credentials)
+        user_id = decoded_token.get("uid")
         if not user_id:
-            raise HTTPException(
-                status_code=401, detail="User ID not found in authentication claims"
-            )
+            raise HTTPException(status_code=401, detail="Invalid token")
         return user_id
-    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError) as e:
+    except auth.ExpiredIdTokenError:
+        logging.error("Failed to verify token: Expired token")
+        raise HTTPException(status_code=401, detail="Expired token")
+    except auth.InvalidIdTokenError as e:
+        logging.error(f"Failed to verify token: Invalid token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        logging.error(f"Failed to verify token: Unknown error: {e}")
         raise HTTPException(
-            status_code=401, detail=f"Invalid authentication userinfo format: {str(e)}"
+            status_code=500, detail="Internal server error during authentication."
         )
 
 
