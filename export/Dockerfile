@@ -24,13 +24,9 @@ RUN git clone https://github.com/ggml-org/llama.cpp
 RUN pip install --no-cache-dir uv
 
 # Copy requirements and install Python dependencies using UV
-COPY pyproject.toml ./
-# COPY ../uv.lock ./
-# WARNING: uv.lock is in the root directory, however in the cloudbuild.yaml file, we're only uploading
-# the export directory due to which uv.lock is not accessible.
-# Due to this, reproducible builds are not possible.
+COPY pyproject.toml uv.lock ./
 
-RUN uv venv && uv sync --no-cache && uv pip list
+RUN uv venv && uv sync --frozen --no-cache && uv pip list
 
 # RUN uv pip install --upgrade unsloth unsloth_zoo
 
