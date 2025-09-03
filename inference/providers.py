@@ -72,8 +72,13 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         # NOTE: Does not need quantization_config because saved models already have one
         model_kwargs = get_model_device_config()
 
-        # Load appropriate model class based on base model
-        if base_model_id in ["google/gemma-3-1b-it", "google/gemma-3-1b-pt"]:
+        # Load appropriate model class based on base model -- 1B and 270M, others including 3n are vision
+        if base_model_id in [
+            "google/gemma-3-1b-it",
+            "google/gemma-3-1b-pt",
+            "google/gemma-3-270m-it",
+            "google/gemma-3-270m-pt",
+        ]:
             # This can direclty load adapter AND merged model, no need PEFT to load adapters explicitly
             model = AutoModelForCausalLM.from_pretrained(adapter_path, **model_kwargs)
         else:
