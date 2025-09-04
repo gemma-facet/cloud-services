@@ -111,16 +111,20 @@ Get dataset information.
           // For vision datasets:
           {
             "messages": [
-              { "role": "system", "content": "Describe the images." },
+              { "role": "system", "content": [{ "type": "text", "text": "Describe the images." }] },
               {
                 "role": "user",
                 "content": [
                   { "type": "text", "text": "Compare these images." },
-                  { "type": "image", "image": "data:image/png;base64,..." },
-                  { "type": "image", "image": "data:image/png;base64,..." }
+                  { "type": "image" },
+                  { "type": "image" }
                 ]
               },
-              { "role": "assistant", "content": "The first image shows..." }
+              { "role": "assistant", "content": [{ "type": "text", "text": "The first image shows..." }] }
+            ],
+            "images": [
+                "data:image/png;base64,...",
+                "data:image/png;base64,..."
             ]
           }
           // up to five samples per split...
@@ -178,6 +182,8 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
 
 > We don't currently support implicitly prompt in preferences which is recommended for Reward Modelling, will do that soon!
 
+The following examples illustrate each row of the processed dataset after conversion. This refers to `dataset[i]` which is `Dict[str, Any]`, but some trainer will index like `dataset["images"]` which is `List[List[PIL.Image]]` for vision datasets.
+
 ### Language Modeling
 
 ```json
@@ -191,15 +197,16 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
       "role": "user",
       "content": [
         { "type": "text", "text": "Compare these images." },
-        { "type": "image", "image": "<base64 or image object>" },
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "image" },
+        { "type": "image" }
       ]
     },
     {
       "role": "assistant",
       "content": [{ "type": "text", "text": "The first image shows..." }]
     }
-  ]
+  ],
+  "images": ["<PIL.Image object>", "<PIL.Image object>"]
 }
 ```
 
@@ -212,18 +219,17 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
   "prompt": [
     {
       "role": "system",
-      "content": [{ "type": "text", "content": "REASONING_PROMPT" }]
+      "content": [{ "type": "text", "text": "REASONING_PROMPT" }]
     },
     {
       "role": "user",
       "content": [
-        { "type": "text", "content": "What color is the sky?" },
-        // This differs to some documentation because we extract this image
-        // and apply processor during training not during preprocessing
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "text", "text": "What color is the sky?" },
+        { "type": "image" }
       ]
     }
   ],
+  "images": ["<PIL.Image object>"],
   "answer": "10",
   "reasoning": "<think>Some math logic</think>",
   "any_other_additional_fields": "additional_info"
@@ -238,23 +244,24 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
     {
       "role": "user",
       "content": [
-        { "type": "text", "content": "What color is the sky?" },
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "text", "text": "What color is the sky?" },
+        { "type": "image" }
       ]
     }
   ],
   "chosen": [
     {
       "role": "assistant",
-      "content": [{ "type": "text", "content": "It is blue." }]
+      "content": [{ "type": "text", "text": "It is blue." }]
     }
   ],
   "rejected": [
     {
       "role": "assistant",
-      "content": [{ "type": "text", "content": "It is green." }]
+      "content": [{ "type": "text", "text": "It is green." }]
     }
-  ]
+  ],
+  "images": ["<PIL.Image object>"]
 }
 ```
 
