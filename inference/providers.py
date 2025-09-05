@@ -18,15 +18,22 @@ class BaseInferenceProvider(ABC):
 
     @abstractmethod
     def run_batch_inference(
-        self, base_model_id: str, adapter_path: str, messages: List, modality: str
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+        modality: str,
     ) -> List[str]:
         """
         Run batch inference for the provider's framework.
 
         Args:
             base_model_id: Base model identifier
-            adapter_path: Path to adapter (local or remote)
-                NOTE: This can either be an adapter or merged model, the logic is handled by provider itself
+            resolved_model_path: Resolved path that can be used directly by the ML framework
+                For GCS: local downloaded path ("/tmp/...")
+                For HF Hub: remote repo ID ("user/repo")
+            model_type: Type of model ("adapter", "merged", or "base")
             messages: List of message conversations
             modality: Either "text" or "vision"
 
@@ -45,20 +52,28 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
     """
 
     def run_batch_inference(
-        self, base_model_id: str, adapter_path: str, messages: List, modality: str
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+        modality: str,
     ) -> List[str]:
         """Run batch inference using HuggingFace Transformers"""
         if modality == "vision":
             return self._run_batch_inference_vision(
-                base_model_id, adapter_path, messages
+                base_model_id, resolved_model_path, model_type, messages
             )
         else:
-            return self._run_batch_inference_text(base_model_id, adapter_path, messages)
+            return self._run_batch_inference_text(
+                base_model_id, resolved_model_path, model_type, messages
+            )
 
     def _run_batch_inference_text(
         self,
         base_model_id: str,
-        adapter_path: str,
+        resolved_model_path: str,
+        model_type: str,
         messages: List,
     ) -> List[str]:
         """Run text-based batch inference using HuggingFace Transformers"""
@@ -79,11 +94,13 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
             "google/gemma-3-270m-it",
             "google/gemma-3-270m-pt",
         ]:
-            # This can direclty load adapter AND merged model, no need PEFT to load adapters explicitly
-            model = AutoModelForCausalLM.from_pretrained(adapter_path, **model_kwargs)
+            # This can directly load adapter AND merged model, no need PEFT to load adapters explicitly
+            model = AutoModelForCausalLM.from_pretrained(
+                resolved_model_path, **model_kwargs
+            )
         else:
             model = AutoModelForImageTextToText.from_pretrained(
-                adapter_path, **model_kwargs
+                resolved_model_path, **model_kwargs
             )
 
         tokenizer = AutoTokenizer.from_pretrained(base_model_id)
@@ -122,7 +139,8 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
     def _run_batch_inference_vision(
         self,
         base_model_id: str,
-        adapter_path: str,
+        resolved_model_path: str,
+        model_type: str,
         messages: List,
     ) -> List[str]:
         """Run vision-based batch inference using HuggingFace Transformers"""
@@ -141,7 +159,7 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         )
 
         model = AutoModelForImageTextToText.from_pretrained(
-            adapter_path, **model_kwargs
+            resolved_model_path, **model_kwargs
         )
         processor = AutoProcessor.from_pretrained(base_model_id)
 
@@ -170,20 +188,28 @@ class UnslothInferenceProvider(BaseInferenceProvider):
     """
 
     def run_batch_inference(
-        self, base_model_id: str, adapter_path: str, messages: List, modality: str
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+        modality: str,
     ) -> List[str]:
         """Run batch inference using Unsloth"""
         if modality == "vision":
             return self._run_batch_inference_vision(
-                base_model_id, adapter_path, messages
+                base_model_id, resolved_model_path, model_type, messages
             )
         else:
-            return self._run_batch_inference_text(base_model_id, adapter_path, messages)
+            return self._run_batch_inference_text(
+                base_model_id, resolved_model_path, model_type, messages
+            )
 
     def _run_batch_inference_text(
         self,
         base_model_id: str,
-        adapter_path: str,
+        resolved_model_path: str,
+        model_type: str,
         messages: List,
     ) -> List[str]:
         """Run text-based batch inference using Unsloth"""
@@ -191,10 +217,10 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth import FastModel
         from unsloth.chat_templates import get_chat_template
 
+        # no need to set load_in_4bit here, we follow the saved model config
         model, tokenizer = FastModel.from_pretrained(
-            model_name=adapter_path,
+            model_name=resolved_model_path,
             max_seq_length=2048,
-            load_in_4bit=True,
         )
         FastModel.for_inference(model)
         tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
@@ -227,7 +253,8 @@ class UnslothInferenceProvider(BaseInferenceProvider):
     def _run_batch_inference_vision(
         self,
         base_model_id: str,
-        adapter_path: str,
+        resolved_model_path: str,
+        model_type: str,
         messages: List,
     ) -> List[str]:
         """Run vision-based batch inference using Unsloth"""
@@ -236,7 +263,7 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth.chat_templates import get_chat_template
 
         model, processor = FastVisionModel.from_pretrained(
-            model_name=adapter_path,
+            model_name=resolved_model_path,
             load_in_4bit=True,
         )
         FastVisionModel.for_inference(model)
@@ -263,3 +290,148 @@ class UnslothInferenceProvider(BaseInferenceProvider):
             generated_ids[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )
         return decoded
+
+
+class VLLMInferenceProvider(BaseInferenceProvider):
+    """
+    vLLM-based inference provider.
+
+    Supports merged and adapter export, both huggingface and unsloth text and vision models.
+    Alternative can use the built-in unsloth vLLM integration with FastLanguageModel(fast_inference=True)
+    but we chose to use vLLM directly here for more control and flexibility.
+    """
+
+    def run_batch_inference(
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+        modality: str,
+    ) -> List[str]:
+        if modality == "vision":
+            return self._run_batch_inference_vision(
+                base_model_id, resolved_model_path, model_type, messages
+            )
+        return self._run_batch_inference_text(
+            base_model_id, resolved_model_path, model_type, messages
+        )
+
+    def _run_batch_inference_text(
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+    ) -> List[str]:
+        from vllm import LLM, SamplingParams
+
+        if model_type == "adapter":
+            from vllm.lora.request import LoRARequest
+
+            # Load base model with LoRA support
+            llm = LLM(model=base_model_id, enable_lora=True)
+            tokenizer = llm.get_tokenizer()
+
+            # Apply ChatML template to each conversation
+            prompts = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            sampling_params = SamplingParams(
+                max_tokens=256,
+                temperature=1.0,
+                top_p=0.95,
+                top_k=64,
+            )
+
+            # Create LoRA request
+            lora_request = LoRARequest("lora_adapter", 1, resolved_model_path)
+
+            # Generate with LoRA
+            outputs = llm.generate(
+                prompts, sampling_params=sampling_params, lora_request=lora_request
+            )
+        else:  # merged or base model
+            # Load merged vLLM model or base model
+            model_path = (
+                resolved_model_path if model_type == "merged" else base_model_id
+            )
+            llm = LLM(model=model_path)
+            tokenizer = llm.get_tokenizer()
+
+            # Apply ChatML template to each conversation
+            prompts = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            sampling_params = SamplingParams(temperature=0.0, max_tokens=256)
+
+            # Generate
+            outputs = llm.generate(prompts, sampling_params=sampling_params)
+
+        # Collect responses
+        return [out.outputs[0].text for out in outputs]
+
+    def _run_batch_inference_vision(
+        self,
+        base_model_id: str,
+        resolved_model_path: str,
+        model_type: str,
+        messages: List,
+    ) -> List[str]:
+        from vllm import LLM, SamplingParams
+        from transformers import AutoProcessor
+
+        if model_type == "adapter":
+            from vllm.lora.request import LoRARequest
+
+            # Load base model with LoRA support for vision
+            llm = LLM(model=base_model_id, enable_lora=True)
+            processor = AutoProcessor.from_pretrained(base_model_id)
+
+            # Create LoRA request
+            lora_request = LoRARequest("lora_adapter", 1, resolved_model_path)
+
+            sampling_params = SamplingParams(
+                temperature=1.0, top_p=0.95, top_k=64, max_tokens=128
+            )
+        else:  # merged or base model
+            # Load merged vLLM model or base model & corresponding processor
+            model_path = (
+                resolved_model_path if model_type == "merged" else base_model_id
+            )
+            llm = LLM(model=model_path)
+            processor = AutoProcessor.from_pretrained(base_model_id)
+
+            sampling_params = SamplingParams(
+                temperature=0.7, top_p=0.95, max_tokens=100
+            )
+
+        prompts = []
+        images = []
+        # Build batch of ChatML prompts + image list
+        for conv in messages:
+            prompts.append(
+                processor.apply_chat_template(
+                    conv, tokenize=False, add_generation_prompt=True
+                )
+            )
+            # extract images from the structured content
+            for msg in conv:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for segment in content:
+                        if segment.get("type") == "image":
+                            images.append(segment["image"])
+
+        if model_type == "adapter":
+            outputs = llm.generate(
+                {"prompt": prompts, "multi_modal_data": {"image": images}},
+                sampling_params=sampling_params,
+                lora_request=lora_request,
+            )
+        else:
+            outputs = llm.generate(
+                {"prompt": prompts, "multi_modal_data": {"image": images}},
+                sampling_params=sampling_params,
+            )
+        return [out.outputs[0].text for out in outputs]
