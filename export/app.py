@@ -139,185 +139,104 @@ async def export(
         logging.error(f"Failed to verify job ownership: {e}")
         raise HTTPException(status_code=500, detail="Failed to verify job ownership")
 
-    # Handle adapter export
-    if request.export_type == "adapter":
+    # Handle export based on type
+    try:
+        # Get export data from Firestore
+        export_data = job_data.get("export", {})
+
+        # Check if export already exists
+        existing_export_path = export_data.get(request.export_type)
+        if existing_export_path:
+            logging.info(
+                f"{request.export_type.title()} export: returning existing path for job {request.job_id}"
+            )
+            return ExportResponse(
+                success=True,
+                job_id=request.job_id,
+                export=ExportInfo(
+                    type=request.export_type,
+                    path=existing_export_path,
+                ),
+            )
+
+        # Export doesn't exist, need to create it
+        logging.info(f"Creating {request.export_type} export for job {request.job_id}")
+
+        # Get required data from job document
         adapter_path = job_data.get("adapter_path")
-        if adapter_path:
-            logging.info(
-                f"Adapter export: returning existing path for job {request.job_id}"
-            )
-            return ExportResponse(
-                success=True,
-                job_id=request.job_id,
-                export=ExportInfo(
-                    type=request.export_type,
-                    path=adapter_path,
-                ),
-            )
-        else:
-            logging.warning(f"Adapter path not found for job {request.job_id}")
-            raise HTTPException(
-                status_code=404,
-                detail="Adapter not found for this job. The training may not have completed successfully.",
-            )
-
-    elif request.export_type == "merged":
         merged_path = job_data.get("merged_path")
-        if merged_path:
-            logging.info(
-                f"Merged export: returning existing path for job {request.job_id}"
+        base_model_id = job_data.get("base_model_id")
+
+        # Login to Hugging Face if token provided
+        login_hf(request.hf_token)
+
+        # Handle different export types
+        if request.export_type == "adapter":
+            if not adapter_path:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Adapter not found for this job. The training may not have completed successfully.",
+                )
+
+            export_path = await run_in_threadpool(
+                export_utils._export_adapter, request.job_id, adapter_path
             )
-            return ExportResponse(
-                success=True,
-                job_id=request.job_id,
-                export=ExportInfo(
-                    type=request.export_type,
-                    path=merged_path,
-                ),
+
+        elif request.export_type == "merged":
+            if not adapter_path:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Adapter not found for this job. Cannot create merged model.",
+                )
+
+            export_path = await run_in_threadpool(
+                export_utils._export_merged,
+                request.job_id,
+                merged_path,
+                adapter_path,
+                base_model_id,
+                request.hf_token,
+            )
+
+        elif request.export_type == "gguf":
+            if not adapter_path:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Adapter not found for this job. Cannot create GGUF model.",
+                )
+
+            export_path = await run_in_threadpool(
+                export_utils._export_gguf,
+                request.job_id,
+                merged_path,
+                adapter_path,
+                base_model_id,
+                request.hf_token,
             )
         else:
-            logging.info(f"Creating merged model for job {request.job_id}")
-            # Create merged model from adapter
-            try:
-                adapter_path = job_data.get("adapter_path")
-                if not adapter_path:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="Adapter not found for this job. Cannot create merged model.",
-                    )
-
-                base_model_id = job_data.get("base_model_id")
-                if not base_model_id:
-                    raise HTTPException(
-                        status_code=400, detail="Base model ID not found for this job."
-                    )
-
-                # Login to Hugging Face first
-                login_hf(request.hf_token)
-
-                # Merge the model
-                merged_path = await run_in_threadpool(
-                    export_utils._merge_model,
-                    adapter_path,
-                    base_model_id,
-                    request.job_id,
-                    request.hf_token,
-                )
-
-                return ExportResponse(
-                    success=True,
-                    job_id=request.job_id,
-                    export=ExportInfo(
-                        type=request.export_type,
-                        path=merged_path,
-                    ),
-                )
-
-            except Exception as e:
-                logging.error(
-                    f"Failed to merge model for job {request.job_id}: {str(e)}"
-                )
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to merge model: {str(e)}"
-                )
-
-    elif request.export_type == "gguf":
-        gguf_path = job_data.get("gguf_path")
-        if gguf_path:
-            logging.info(
-                f"GGUF export: returning existing path for job {request.job_id}"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported export type: {request.export_type}",
             )
-            return ExportResponse(
-                success=True,
-                job_id=request.job_id,
-                export=ExportInfo(
-                    type=request.export_type,
-                    path=gguf_path,
-                ),
-            )
-        else:
-            logging.info(f"Starting GGUF conversion for job {request.job_id}")
-            # GGUF Export Flow:
-            # 1. Check if merged model exists in Firestore
-            # 2. If yes: download from GCS and convert to GGUF
-            # 3. If no: check if adapter exists, merge model, then convert to GGUF
-            try:
-                # First check if we have a merged model, if not create one
-                merged_path = job_data.get("merged_path")
 
-                if merged_path:
-                    logging.info(
-                        f"Downloading existing merged model for GGUF conversion: {merged_path}"
-                    )
-                    # Download existing merged model and convert to GGUF
-                    gguf_path = await run_in_threadpool(
-                        export_utils._convert_to_gguf,
-                        merged_path,
-                        request.job_id,
-                        None,  # No local path, will download from GCS
-                    )
-                else:
-                    logging.info("Creating merged model first for GGUF conversion")
-                    # Create merged model first, then convert to GGUF
-                    adapter_path = job_data.get("adapter_path")
-                    if not adapter_path:
-                        raise HTTPException(
-                            status_code=404,
-                            detail="Adapter not found for this job. Cannot create GGUF model.",
-                        )
+        return ExportResponse(
+            success=True,
+            job_id=request.job_id,
+            export=ExportInfo(
+                type=request.export_type,
+                path=export_path,
+            ),
+        )
 
-                    base_model_id = job_data.get("base_model_id")
-                    if not base_model_id:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Base model ID not found for this job.",
-                        )
-
-                    # Login to Hugging Face first
-                    login_hf(request.hf_token)
-
-                    # Merge the model first (don't clean up temp files for GGUF conversion)
-                    merged_path = await run_in_threadpool(
-                        export_utils._merge_model,
-                        adapter_path,
-                        base_model_id,
-                        request.job_id,
-                        request.hf_token,
-                        False,  # cleanup_temp=False
-                    )
-
-                    logging.info("Converting local merged model to GGUF")
-                    # Convert to GGUF using the local merged model
-                    gguf_path = await run_in_threadpool(
-                        export_utils._convert_to_gguf,
-                        merged_path,
-                        request.job_id,
-                        "merged_model",  # Local path to the merged model we just created
-                    )
-
-                return ExportResponse(
-                    success=True,
-                    job_id=request.job_id,
-                    export=ExportInfo(
-                        type=request.export_type,
-                        path=gguf_path,
-                    ),
-                )
-
-            except Exception as e:
-                logging.error(
-                    f"Failed to convert to GGUF for job {request.job_id}: {str(e)}"
-                )
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to convert to GGUF: {str(e)}"
-                )
-
-    # If we reach here, it means no specific export type was handled
-    # This shouldn't happen due to the Literal type constraint, but let's handle it gracefully
-    raise HTTPException(
-        status_code=400,
-        detail=f"Unsupported export type: {request.export_type}",
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(
+            f"Failed to export {request.export_type} for job {request.job_id}: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to export {request.export_type}: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

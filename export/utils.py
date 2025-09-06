@@ -1,9 +1,8 @@
 import os
 import logging
-import tempfile
-import shutil
 from typing import Optional
-from google.cloud import storage, firestore
+from google.cloud import firestore
+from storage import gcs_storage
 
 
 class ModelExportUtils:
@@ -12,86 +11,15 @@ class ModelExportUtils:
     """
 
     def __init__(self):
-        """Initialize the export utilities with Google Cloud and Firestore clients."""
+        """Initialize the export utilities with Firestore client."""
         self.project_id = os.getenv("PROJECT_ID")
         if not self.project_id:
             raise ValueError("PROJECT_ID environment variable must be set")
 
-        # Initialize Google Cloud clients
-        self.storage_client = storage.Client()
+        # Initialize Firestore client
         self.db = firestore.Client(project=self.project_id)
 
-        # Environment variables for storage
-        self.gcs_export_bucket = os.getenv(
-            "GCS_EXPORT_BUCKET_NAME", "gemma-export-bucket"
-        )
-
         self.logger = logging.getLogger(__name__)
-
-    def _download_adapter_from_public_url(self, model_id: str) -> str:
-        """
-        Download entire adapter folder from Google Cloud Storage to a temporary local directory.
-
-        Args:
-            model_id: The model ID (job_id) to download
-
-        Returns:
-            str: Local path to the downloaded adapter directory
-
-        Raises:
-            Exception: If download fails
-        """
-        try:
-            # Create temporary directory for the adapter
-            temp_dir = tempfile.mkdtemp(prefix=f"adapter_{model_id}_")
-            self.logger.info(f"Downloading adapter for model {model_id} to {temp_dir}")
-
-            # Use Google Cloud Storage client to download the entire folder
-            bucket_name = "gemma-export-bucket"
-            source_folder = f"trained_adapters/{model_id}/"
-
-            # List all blobs in the adapter folder
-            blobs = self.storage_client.list_blobs(bucket_name, prefix=source_folder)
-
-            downloaded_files = []
-
-            for blob in blobs:
-                # Remove folder prefix from file path
-                relative_path = blob.name[len(source_folder) :].lstrip("/")
-
-                # Skip empty paths (directory placeholders)
-                if not relative_path:
-                    continue
-
-                local_path = os.path.join(temp_dir, relative_path)
-
-                # Make sure local directories exist
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-
-                # Skip "directory" placeholders (blobs ending with "/")
-                if not blob.name.endswith("/"):
-                    blob.download_to_filename(local_path)
-                    downloaded_files.append(relative_path)
-                    self.logger.info(f"Downloaded {blob.name} to {local_path}")
-
-            if not downloaded_files:
-                raise Exception(
-                    f"No files found in adapter directory for model {model_id}"
-                )
-
-            self.logger.info(
-                f"Successfully downloaded adapter for model {model_id} with {len(downloaded_files)} files"
-            )
-            return temp_dir
-
-        except Exception as e:
-            # Clean up temp directory on failure
-            if "temp_dir" in locals() and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            self.logger.error(
-                f"Failed to download adapter for model {model_id}: {str(e)}"
-            )
-            raise Exception(f"Adapter download failed: {str(e)}")
 
     def _get_backend_provider(self, base_model_id: str) -> str:
         """
@@ -110,57 +38,32 @@ class ModelExportUtils:
 
     def _merge_model(
         self,
-        adapter_path: str,
+        local_adapter_path: str,
         base_model_id: str,
         job_id: str,
         hf_token: Optional[str] = None,
         cleanup_temp: bool = True,
     ) -> str:
         """
-        Merge the adapter with the base model and upload to Google Cloud Storage.
+        Merge the adapter with the base model locally.
 
         Args:
-            adapter_path: Path to the trained adapter (GCS path or model_id)
+            local_adapter_path: Local path to the downloaded adapter
             base_model_id: ID of the base model (e.g., "google/gemma-2-9b")
-            job_id: Job ID for tracking and database updates
+            job_id: Job ID for tracking
             hf_token: Hugging Face token for accessing gated models
-            cleanup_temp: Whether to clean up temporary files after upload
+            cleanup_temp: Whether to clean up temporary files after merging
 
         Returns:
-            str: GCS path to the merged model
+            str: Local path to the merged model
 
         Raises:
-            Exception: If merging or upload fails
+            Exception: If merging fails
         """
-        local_adapter_path = None
         try:
             self.logger.info(f"Starting model merge for job {job_id}")
-            self.logger.info(f"Adapter path: {adapter_path}")
+            self.logger.info(f"Local adapter path: {local_adapter_path}")
             self.logger.info(f"Base model: {base_model_id}")
-
-            # Extract model_id from adapter_path if it's a GCS path
-            if adapter_path.startswith("gs://"):
-                # Extract job_id from GCS path like gs://bucket/trained_adapters/job_id/
-                path_parts = adapter_path.rstrip("/").split("/")
-                if len(path_parts) < 2:
-                    raise ValueError(f"Invalid GCS path format: {adapter_path}")
-                model_id = path_parts[-1]  # Last part should be the job_id
-                self.logger.info(f"Extracted model_id from GCS path: {model_id}")
-            else:
-                # Assume adapter_path is already the model_id
-                model_id = adapter_path
-                self.logger.info(f"Using adapter_path as model_id: {model_id}")
-
-            # Validate model_id
-            if not model_id or not model_id.strip():
-                raise ValueError(
-                    f"Invalid model_id extracted from adapter_path: {adapter_path}"
-                )
-
-            # Download adapter from public URL
-            self.logger.info(f"Downloading adapter for model {model_id}")
-            local_adapter_path = self._download_adapter_from_public_url(model_id)
-            self.logger.info(f"Downloaded adapter to local path: {local_adapter_path}")
 
             backend_provider = self._get_backend_provider(base_model_id)
             self.logger.info(f"Backend provider: {backend_provider}")
@@ -201,239 +104,18 @@ class ModelExportUtils:
 
             merged_model_path = "merged_model"
 
-            # Upload to GCS and update Firestore
-            self.logger.info("Uploading merged model to Google Cloud Storage...")
-            gcs_merged_path = self._upload_merged_model_to_gcs(
-                merged_model_path, job_id
-            )
-
-            # Clean up temp files if requested (skip for GGUF conversion)
+            # Clean up temp files if requested
             if cleanup_temp:
-                self._cleanup_temp_directory(merged_model_path)
+                gcs_storage._cleanup_local_directory(merged_model_path)
             else:
-                self.logger.info("Keeping temp files for GGUF conversion")
+                self.logger.info("Keeping temp files for further processing")
 
-            self.logger.info(f"Model merging completed. GCS path: {gcs_merged_path}")
-
-            # Update Firestore with merged model path
-            self._update_job_merged_path(job_id, gcs_merged_path)
-
-            self.logger.info(f"Successfully merged and uploaded model for job {job_id}")
+            self.logger.info(f"Successfully merged model for job {job_id}")
             return merged_model_path
 
         except Exception as e:
             self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
             raise Exception(f"Model merging failed: {str(e)}")
-        finally:
-            # Always clean up the downloaded adapter files
-            if local_adapter_path and os.path.exists(local_adapter_path):
-                self.logger.info(
-                    f"Cleaning up downloaded adapter files: {local_adapter_path}"
-                )
-                shutil.rmtree(local_adapter_path, ignore_errors=True)
-
-    def _convert_to_gguf(
-        self,
-        merged_model_path: str,
-        job_id: str,
-        local_merged_path: Optional[str] = None,
-    ) -> str:
-        """
-        Convert merged model to GGUF format and upload to Google Cloud Storage.
-
-        Args:
-            merged_model_path: GCS path to the merged model
-            job_id: Job ID for tracking
-            local_merged_path: Local path to merged model (if already available)
-
-        Returns:
-            str: GCS path to the GGUF model
-
-        Raises:
-            Exception: If conversion or upload fails
-        """
-        try:
-            self.logger.info(f"Starting GGUF conversion for job {job_id}")
-            self.logger.info(f"Merged model path: {merged_model_path}")
-
-            # GGUF Conversion Flow:
-            # 1. Get merged model (local if available, otherwise download from GCS)
-            # 2. Convert to GGUF using llama.cpp
-            # 3. Upload GGUF to GCS and update Firestore
-            # 4. Clean up all temporary files
-
-            if local_merged_path and os.path.exists(local_merged_path):
-                self.logger.info(
-                    f"Using existing local merged model: {local_merged_path}"
-                )
-                model_path_for_conversion = local_merged_path
-            else:
-                self.logger.info("Downloading merged model from GCS...")
-                local_merged_path = f"/tmp/merged_model_{job_id}"
-                self._download_merged_model_from_gcs(
-                    merged_model_path, local_merged_path
-                )
-                model_path_for_conversion = local_merged_path
-
-            # Convert to GGUF using llama.cpp
-            gguf_file_path = self._run_llama_cpp_conversion(
-                model_path_for_conversion, job_id
-            )
-
-            # Upload GGUF to GCS and update Firestore
-            gcs_gguf_path = self._upload_gguf_to_gcs(gguf_file_path, job_id)
-            self._update_job_gguf_path(job_id, gcs_gguf_path)
-
-            # Clean up all temporary files
-            self.logger.info("Cleaning up all temporary files...")
-            if local_merged_path and local_merged_path.startswith("/tmp/"):
-                self._cleanup_temp_directory(local_merged_path)
-            if os.path.exists(gguf_file_path):
-                os.remove(gguf_file_path)
-                self.logger.info(f"Cleaned up temporary GGUF file: {gguf_file_path}")
-
-            self.logger.info(f"Successfully converted to GGUF for job {job_id}")
-            return gcs_gguf_path
-
-        except Exception as e:
-            self.logger.error(f"Failed to convert to GGUF for job {job_id}: {str(e)}")
-            raise Exception(f"GGUF conversion failed: {str(e)}")
-
-    def _update_job_merged_path(self, job_id: str, merged_path: str) -> None:
-        """
-        Update the merged_path field in Firestore for a specific job.
-
-        Args:
-            job_id: Job ID to update
-            merged_path: Path to the merged model
-        """
-        try:
-            doc_ref = self.db.collection("training_jobs").document(job_id)
-            doc_ref.update({"merged_path": merged_path})
-            self.logger.info(f"Updated merged_path for job {job_id}: {merged_path}")
-        except Exception as e:
-            self.logger.error(
-                f"Failed to update merged_path for job {job_id}: {str(e)}"
-            )
-            raise
-
-    def _update_job_gguf_path(self, job_id: str, gguf_path: str) -> None:
-        """
-        Update the gguf_path field in Firestore for a specific job.
-
-        Args:
-            job_id: Job ID to update
-            gguf_path: Path to the GGUF model in GCS
-        """
-        try:
-            doc_ref = self.db.collection("training_jobs").document(job_id)
-            doc_ref.update({"gguf_path": gguf_path})
-            self.logger.info(f"Updated gguf_path for job {job_id}: {gguf_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to update gguf_path for job {job_id}: {str(e)}")
-            raise
-
-    def _upload_merged_model_to_gcs(self, local_model_path: str, job_id: str) -> str:
-        """
-        Upload the merged model directory to Google Cloud Storage.
-
-        Args:
-            local_model_path: Local path to the merged model directory
-            job_id: Job ID for organizing the upload
-
-        Returns:
-            str: GCS path to the uploaded merged model
-        """
-        try:
-            bucket = self.storage_client.bucket(self.gcs_export_bucket)
-            gcs_prefix = f"merged_models/{job_id}"
-
-            self.logger.info(
-                f"Uploading merged model from {local_model_path} to gs://{self.gcs_export_bucket}/{gcs_prefix}"
-            )
-
-            # Upload all files in the merged model directory
-            for root, dirs, files in os.walk(local_model_path):
-                for file in files:
-                    local_file_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(local_file_path, local_model_path)
-                    gcs_blob_path = f"{gcs_prefix}/{relative_path}"
-
-                    blob = bucket.blob(gcs_blob_path)
-                    blob.upload_from_filename(local_file_path)
-                    self.logger.info(
-                        f"Uploaded {local_file_path} to gs://{self.gcs_export_bucket}/{gcs_blob_path}"
-                    )
-
-            gcs_merged_path = f"gs://{self.gcs_export_bucket}/{gcs_prefix}"
-            self.logger.info(f"Successfully uploaded merged model to {gcs_merged_path}")
-            return gcs_merged_path
-
-        except Exception as e:
-            self.logger.error(f"Failed to upload merged model to GCS: {str(e)}")
-            raise Exception(f"GCS upload failed: {str(e)}")
-
-    def _cleanup_temp_directory(self, directory_path: str) -> None:
-        """
-        Clean up a temporary directory and all its contents.
-
-        Args:
-            directory_path: Path to the directory to clean up
-        """
-        try:
-            if os.path.exists(directory_path):
-                import shutil
-
-                shutil.rmtree(directory_path)
-                self.logger.info(f"Cleaned up temporary directory: {directory_path}")
-            else:
-                self.logger.warning(
-                    f"Directory does not exist for cleanup: {directory_path}"
-                )
-        except Exception as e:
-            self.logger.warning(
-                f"Failed to clean up directory {directory_path}: {str(e)}"
-            )
-
-    def _download_merged_model_from_gcs(
-        self, gcs_merged_path: str, local_path: str
-    ) -> None:
-        """
-        Download merged model from GCS to local directory.
-
-        Args:
-            gcs_merged_path: GCS path to the merged model
-            local_path: Local path to download to
-        """
-        try:
-            # Extract bucket and prefix from GCS path
-            if gcs_merged_path.startswith("gs://"):
-                path_parts = gcs_merged_path[5:].split("/", 1)
-                bucket_name = path_parts[0]
-                prefix = path_parts[1] if len(path_parts) > 1 else ""
-            else:
-                raise ValueError(f"Invalid GCS path: {gcs_merged_path}")
-
-            bucket = self.storage_client.bucket(bucket_name)
-
-            # Create local directory
-            os.makedirs(local_path, exist_ok=True)
-
-            # Download all blobs with the prefix
-            blobs = bucket.list_blobs(prefix=prefix)
-            for blob in blobs:
-                relative_path = blob.name[len(prefix) :].lstrip("/")
-                if relative_path:
-                    local_file_path = os.path.join(local_path, relative_path)
-                    os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-                    blob.download_to_filename(local_file_path)
-                    self.logger.info(f"Downloaded {blob.name} to {local_file_path}")
-
-            self.logger.info(f"Successfully downloaded merged model to {local_path}")
-
-        except Exception as e:
-            self.logger.error(f"Failed to download merged model from GCS: {str(e)}")
-            raise Exception(f"GCS download failed: {str(e)}")
 
     def _run_llama_cpp_conversion(self, local_merged_path: str, job_id: str) -> str:
         """
@@ -489,47 +171,253 @@ class ModelExportUtils:
             self.logger.error(f"Failed to run llama.cpp conversion: {str(e)}")
             raise Exception(f"llama.cpp conversion failed: {str(e)}")
 
-    def _upload_gguf_to_gcs(self, local_gguf_path: str, job_id: str) -> str:
+    def _update_export_path(self, job_id: str, path_type: str, path: str) -> None:
         """
-        Upload GGUF file to Google Cloud Storage.
+        Update the export path or merged_path in Firestore for a specific job.
 
         Args:
-            local_gguf_path: Local path to the GGUF file
-            job_id: Job ID for organizing the upload
+            job_id: Job ID to update
+            path_type: Type of path ('adapter_file', 'merged_file', 'gguf_file', 'merged_path')
+            path: Path to the exported file/directory
+        """
+        try:
+            doc_ref = self.db.collection("training_jobs").document(job_id)
+
+            if path_type in ["adapter_file", "merged_file", "gguf_file"]:
+                # Remove '_file' suffix to get the export type
+                export_type = path_type.replace("_file", "")
+                doc_ref.update({f"export.{export_type}": path})
+                self.logger.info(
+                    f"Updated export.{export_type} for job {job_id}: {path}"
+                )
+            elif path_type == "merged_path":
+                doc_ref.update({"merged_path": path})
+                self.logger.info(f"Updated merged_path for job {job_id}: {path}")
+            else:
+                raise ValueError(f"Invalid path_type: {path_type}")
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to update {path_type} for job {job_id}: {str(e)}"
+            )
+            raise
+
+    def _export_adapter(self, job_id: str, adapter_path: str) -> str:
+        """
+        Export adapter by downloading, zipping, and uploading to files bucket.
+
+        Args:
+            job_id: Job ID for the export
+            adapter_path: GCS path to the adapter directory
+
+        Returns:
+            str: GCS path to the uploaded adapter zip file
+        """
+        local_adapter_path = None
+        try:
+            self.logger.info(f"Starting adapter export for job {job_id}")
+
+            # Download adapter from GCS
+            local_adapter_path = gcs_storage._download_directory(adapter_path)
+
+            # Zip and upload to files bucket
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{job_id}"
+            gcs_zip_path = gcs_storage._zip_upload_file(
+                local_adapter_path, files_destination, "adapter"
+            )
+
+            # Update Firestore
+            self._update_export_path(job_id, "adapter_file", gcs_zip_path)
+
+            self.logger.info(
+                f"Successfully exported adapter for job {job_id}: {gcs_zip_path}"
+            )
+            return gcs_zip_path
+
+        except Exception as e:
+            self.logger.error(f"Failed to export adapter for job {job_id}: {str(e)}")
+            raise Exception(f"Adapter export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_adapter_path:
+                gcs_storage._cleanup_local_directory(local_adapter_path)
+
+    def _export_merged(
+        self,
+        job_id: str,
+        merged_path: Optional[str] = None,
+        adapter_path: Optional[str] = None,
+        base_model_id: Optional[str] = None,
+        hf_token: Optional[str] = None,
+    ) -> str:
+        """
+        Export merged model by downloading existing or creating from adapter, then zipping and uploading.
+
+        Args:
+            job_id: Job ID for the export
+            merged_path: Optional GCS path to existing merged model
+            adapter_path: Optional GCS path to adapter (needed if merged_path not available)
+            base_model_id: Optional base model ID (needed if creating merged model)
+            hf_token: Optional Hugging Face token
+
+        Returns:
+            str: GCS path to the uploaded merged model zip file
+        """
+        local_merged_path = None
+        try:
+            self.logger.info(f"Starting merged model export for job {job_id}")
+
+            if merged_path:
+                # Download existing merged model
+                self.logger.info(f"Downloading existing merged model: {merged_path}")
+                local_merged_path = gcs_storage._download_directory(merged_path)
+            else:
+                # Create merged model from adapter
+                if not adapter_path or not base_model_id:
+                    raise Exception(
+                        "adapter_path and base_model_id required to create merged model"
+                    )
+
+                self.logger.info("Creating merged model from adapter")
+                # Download adapter first
+                local_adapter_path = gcs_storage._download_directory(adapter_path)
+
+                # Merge model locally
+                local_merged_path = self._merge_model(
+                    local_adapter_path,
+                    base_model_id,
+                    job_id,
+                    hf_token,
+                    cleanup_temp=False,
+                )
+
+                # Clean up downloaded adapter
+                gcs_storage._cleanup_local_directory(local_adapter_path)
+
+                # Upload merged model to export bucket
+                export_destination = (
+                    f"gs://{gcs_storage.export_bucket}/merged_models/{job_id}"
+                )
+                merged_gcs_path = gcs_storage._upload_directory(
+                    local_merged_path, export_destination
+                )
+
+                # Update merged_path in Firestore
+                self._update_export_path(job_id, "merged_path", merged_gcs_path)
+
+            # Zip and upload to files bucket
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{job_id}"
+            gcs_zip_path = gcs_storage._zip_upload_file(
+                local_merged_path, files_destination, "merged"
+            )
+
+            # Update Firestore
+            self._update_export_path(job_id, "merged_file", gcs_zip_path)
+
+            self.logger.info(
+                f"Successfully exported merged model for job {job_id}: {gcs_zip_path}"
+            )
+            return gcs_zip_path
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to export merged model for job {job_id}: {str(e)}"
+            )
+            raise Exception(f"Merged model export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_merged_path:
+                gcs_storage._cleanup_local_directory(local_merged_path)
+
+    def _export_gguf(
+        self,
+        job_id: str,
+        merged_path: Optional[str] = None,
+        adapter_path: Optional[str] = None,
+        base_model_id: Optional[str] = None,
+        hf_token: Optional[str] = None,
+    ) -> str:
+        """
+        Export GGUF model by converting from existing merged model or creating merged model first.
+
+        Args:
+            job_id: Job ID for the export
+            merged_path: Optional GCS path to existing merged model
+            adapter_path: Optional GCS path to adapter (needed if merged_path not available)
+            base_model_id: Optional base model ID (needed if creating merged model)
+            hf_token: Optional Hugging Face token
 
         Returns:
             str: GCS path to the uploaded GGUF file
         """
+        local_merged_path = None
         try:
-            bucket = self.storage_client.bucket(self.gcs_export_bucket)
-            gcs_blob_path = f"gguf_models/{job_id}/{os.path.basename(local_gguf_path)}"
+            self.logger.info(f"Starting GGUF export for job {job_id}")
 
-            blob = bucket.blob(gcs_blob_path)
-            blob.upload_from_filename(local_gguf_path)
+            if merged_path:
+                # Download existing merged model
+                self.logger.info(f"Downloading existing merged model: {merged_path}")
+                local_merged_path = gcs_storage._download_directory(merged_path)
+            else:
+                # Create merged model from adapter first
+                if not adapter_path or not base_model_id:
+                    raise Exception(
+                        "adapter_path and base_model_id required to create merged model"
+                    )
 
-            gcs_gguf_path = f"gs://{self.gcs_export_bucket}/{gcs_blob_path}"
-            self.logger.info(f"Successfully uploaded GGUF to {gcs_gguf_path}")
+                self.logger.info(
+                    "Creating merged model from adapter for GGUF conversion"
+                )
+                # Download adapter first
+                local_adapter_path = gcs_storage._download_directory(adapter_path)
 
+                # Merge model locally
+                local_merged_path = self._merge_model(
+                    local_adapter_path,
+                    base_model_id,
+                    job_id,
+                    hf_token,
+                    cleanup_temp=False,
+                )
+
+                # Clean up downloaded adapter
+                gcs_storage._cleanup_local_directory(local_adapter_path)
+
+                # Upload merged model to export bucket
+                export_destination = (
+                    f"gs://{gcs_storage.export_bucket}/merged_models/{job_id}"
+                )
+                merged_gcs_path = gcs_storage._upload_directory(
+                    local_merged_path, export_destination
+                )
+
+                # Update merged_path in Firestore
+                self._update_export_path(job_id, "merged_path", merged_gcs_path)
+
+            # Convert to GGUF
+            gguf_file_path = self._run_llama_cpp_conversion(local_merged_path, job_id)
+
+            # Upload GGUF to files bucket
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{job_id}"
+            gcs_gguf_path = gcs_storage._upload_file(
+                gguf_file_path, files_destination, "model"
+            )
+
+            # Update Firestore
+            self._update_export_path(job_id, "gguf_file", gcs_gguf_path)
+
+            self.logger.info(
+                f"Successfully exported GGUF model for job {job_id}: {gcs_gguf_path}"
+            )
             return gcs_gguf_path
 
         except Exception as e:
-            self.logger.error(f"Failed to upload GGUF to GCS: {str(e)}")
-            raise Exception(f"GCS upload failed: {str(e)}")
-
-    def cleanup_temp_files(self, temp_paths: list) -> None:
-        """
-        Clean up temporary files created during export operations.
-
-        Args:
-            temp_paths: List of temporary file paths to clean up
-        """
-        try:
-            for path in temp_paths:
-                if os.path.exists(path):
-                    os.remove(path)
-                    self.logger.info(f"Cleaned up temporary file: {path}")
-        except Exception as e:
-            self.logger.warning(f"Failed to clean up some temporary files: {str(e)}")
+            self.logger.error(f"Failed to export GGUF model for job {job_id}: {str(e)}")
+            raise Exception(f"GGUF export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_merged_path:
+                gcs_storage._cleanup_local_directory(local_merged_path)
 
 
 # Create a global instance for easy access
