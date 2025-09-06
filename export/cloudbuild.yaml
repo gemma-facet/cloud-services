@@ -1,0 +1,45 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest",
+      ]
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      [
+        "run",
+        "deploy",
+        "export-service",
+        "--image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest",
+        "--region=us-central1",
+        "--platform=managed",
+        "--memory=16Gi",
+        "--cpu=4",
+        "--gpu=1",
+        "--port=8080",
+        "--allow-unauthenticated",
+        "--max-instances=2",
+        "--concurrency=2",
+        "--no-gpu-zonal-redundancy",
+        "--timeout=3600",
+        "--set-env-vars=GCS_DATA_BUCKET_NAME=${_GCS_DATA_BUCKET_NAME},GCS_EXPORT_BUCKET_NAME=${_GCS_EXPORT_BUCKET_NAME}",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
+      ]
+
+substitutions:
+  _GCS_DATA_BUCKET_NAME: "gemma-dataset-bucket"
+  _GCS_EXPORT_BUCKET_NAME: "gemma-export-bucket"
+
+options:
+  machineType: "E2_HIGHCPU_32"
