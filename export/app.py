@@ -161,6 +161,83 @@ async def get_jobs(current_user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=500, detail="Failed to fetch jobs")
 
 
+@app.get("/jobs/{job_id}", response_model=JobResponse)
+async def get_job(job_id: str, current_user_id: str = Depends(get_current_user_id)):
+    """
+    Get a specific completed training job by job_id for the current user.
+
+    Args:
+        job_id: The ID of the job to retrieve
+
+    Returns:
+        The specific training job details including export information.
+    """
+    try:
+        # Get the specific job document
+        doc = db.collection("training_jobs").document(job_id).get()
+        if not doc.exists:
+            logging.error(f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_data = doc.to_dict()
+        if not job_data:
+            logging.error(f"Job {job_id} data is empty")
+            raise HTTPException(status_code=404, detail="Job data not found")
+
+        # Check job ownership
+        job_user_id = job_data.get("user_id")
+        if job_user_id != current_user_id:
+            logging.error(
+                f"User {current_user_id} attempted to access job {job_id} owned by {job_user_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Job does not belong to current user",
+            )
+
+        # Check job completion status
+        job_status = job_data.get("status")
+        if job_status != "completed":
+            logging.error(f"Job {job_id} is not completed (status: {job_status})")
+            raise HTTPException(
+                status_code=400, detail="Only completed jobs can be accessed"
+            )
+
+        # Extract required fields with proper defaults
+        export_data = job_data.get("export", {})
+        # Create ExportPaths object with proper structure
+        export_obj = ExportPaths(
+            adapter=export_data.get("adapter"),
+            merged=export_data.get("merged"),
+            gguf=export_data.get("gguf"),
+        )
+
+        # Convert Firestore timestamp to string if needed
+        created_at = job_data.get("created_at")
+        if hasattr(created_at, "isoformat"):
+            created_at = created_at.isoformat()
+        elif created_at is None:
+            created_at = ""
+
+        job_response = JobResponse(
+            base_model_id=job_data.get("base_model_id"),
+            created_at=created_at,
+            export=export_obj,
+            export_status=job_data.get("export_status"),
+            job_id=job_data.get("job_id"),
+            job_name=job_data.get("job_name"),
+        )
+
+        logging.info(f"Retrieved job {job_id} for user {current_user_id}")
+        return job_response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Failed to fetch job {job_id} for user {current_user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch job")
+
+
 @app.post("/export", response_model=ExportResponse)
 async def export(
     request: ExportRequest, current_user_id: str = Depends(get_current_user_id)
