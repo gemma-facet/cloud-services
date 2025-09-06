@@ -3,10 +3,18 @@ import os
 import firebase_admin
 from firebase_admin import auth
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.concurrency import run_in_threadpool
-from schema import ExportRequest, ExportResponse, ExportInfo
+from schema import (
+    ExportRequest,
+    ExportResponse,
+    ExportInfo,
+    JobsResponse,
+    JobResponse,
+    ExportPaths,
+)
 from huggingface_hub import login
 from typing import Optional
 from utils import export_utils
@@ -90,6 +98,67 @@ def login_hf(hf_token: Optional[str]):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "export"}
+
+
+@app.get("/jobs", response_model=JobsResponse)
+async def get_jobs(current_user_id: str = Depends(get_current_user_id)):
+    """
+    Get all completed training jobs for the current user.
+
+    Returns:
+        List of completed training jobs with their details including export information.
+    """
+    try:
+        # Query Firestore for all training jobs belonging to the current user
+        jobs_query = db.collection("training_jobs").where(
+            filter=FieldFilter("user_id", "==", current_user_id)
+        )
+        jobs = jobs_query.stream()
+
+        completed_jobs = []
+
+        for job in jobs:
+            job_data = job.to_dict()
+
+            # Only include jobs with status "completed"
+            if job_data.get("status") != "completed":
+                continue
+
+            # Extract required fields with proper defaults
+            export_data = job_data.get("export", {})
+            # Create ExportPaths object with proper structure
+            export_obj = ExportPaths(
+                adapter=export_data.get("adapter"),
+                merged=export_data.get("merged"),
+                gguf=export_data.get("gguf"),
+            )
+
+            # Convert Firestore timestamp to string if needed
+            created_at = job_data.get("created_at")
+            if hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
+            elif created_at is None:
+                created_at = ""
+
+            job_response = JobResponse(
+                base_model_id=job_data.get("base_model_id"),
+                created_at=created_at,
+                export=export_obj,
+                export_status=job_data.get("export_status"),
+                job_id=job_data.get("job_id"),
+                job_name=job_data.get("job_name"),
+            )
+
+            completed_jobs.append(job_response)
+
+        logging.info(
+            f"Retrieved {len(completed_jobs)} completed jobs for user {current_user_id}"
+        )
+        return JobsResponse(jobs=completed_jobs)
+
+    except Exception as e:
+        logging.error(f"Failed to fetch jobs for user {current_user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch jobs")
 
 
 @app.post("/export", response_model=ExportResponse)
