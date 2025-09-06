@@ -9,36 +9,6 @@ import shutil
 import numpy as np
 
 
-def construct_full_model_id(base_model_id: str, provider: str, method: str) -> str:
-    """
-    Construct the full model ID based on base model, provider, and quantization method.
-    NOTE: This is backward compatible, i.e. if you provide google/gemma-3-1b-it it will still work.
-
-    Args:
-        base_model_id: Base model name (e.g., "gemma-3-1b-it")
-        provider: Training provider ("unsloth" or "huggingface")
-        method: Training method ("Full", "LoRA", "QLoRA")
-
-    Returns:
-        Full model ID with proper namespace and quantization suffix
-    """
-    if "/" in base_model_id:
-        # Already a full model ID
-        return base_model_id
-
-    if provider == "huggingface":
-        # For HuggingFace, always use google/ namespace
-        return f"google/{base_model_id}"
-    elif provider == "unsloth":
-        # For Unsloth, use unsloth/ namespace
-        if method == "QLoRA":  # default to unsloth dynamic quants
-            return f"unsloth/{base_model_id}-unsloth-bnb-4bit"
-        else:
-            return f"unsloth/{base_model_id}"
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
-
-
 def run_evaluation(trainer):
     """
     Run evaluation on the trainer, log and return metrics.

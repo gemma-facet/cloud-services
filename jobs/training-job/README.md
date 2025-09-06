@@ -11,6 +11,16 @@ Cloud Run job that executes fine-tuning on Gemma models.
 - **`storage.py`** - Model and dataset saving/loading from GCS/HF Hub
 - **`schema.py`** - Training configuration models
 
+## Deployment
+
+```bash
+gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
+```
+
+- Cloud Run job with GPU support (L4)
+- Memory: 32Gi, CPU: 8 cores
+- GPU: 1x NVIDIA L4
+
 ## Execution Flow
 
 1. **Start**: Job triggered by training service with `JOB_ID`
@@ -41,8 +51,6 @@ To create a training job, the following information must be provided or a defaul
 - **Full**: Full fine-tuning (requires more memory)
 - **LoRA**: Low-rank adaptation (memory efficient)
 - **QLoRA**: Quantized LoRA (4-bit precision) _<-- default_
-
-> [!NOTE] We only support 4bit quantization for QLoRA and we use bitsandbytes ONLY! For anything else, please open an issue or ship a PR :)
 
 ### Trainer
 
@@ -121,7 +129,6 @@ The following features will be turned off by default if not provided.
 Configure evaluation during training:
 
 - **eval_strategy**: When to run evaluation (`no`, `steps`, `epoch`)
-  - NOTE: specifying `eval_strategy = no` will override everything (i.e. even if you have a eval set)
 - **eval_steps**: Evaluation frequency when using `steps` strategy
 - **evaluation_metrics**: `true/false` whether to compute evaluation metrics (accuracy and perplexity, token level)
 - **batch_eval_metrics**: Enable batch evaluation mode for better performance
@@ -264,13 +271,3 @@ I will update this later...
 - Evaluation during training is not supported for Unsloth, this might be worked on by unsloth team (use eval in inference service instead)
 
 - Evaluation metrics might not work on hugging face due to OOM depending on your config...
-
-## Deployment
-
-```bash
-gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
-```
-
-- Cloud Run job with GPU support (L4)
-- Memory: 32Gi, CPU: 8 cores
-- GPU: 1x NVIDIA L4

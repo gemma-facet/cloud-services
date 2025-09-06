@@ -21,10 +21,6 @@ class BaseTrainingService(ABC):
         # 2. Download datasets
         train_ds, eval_ds = self._download_dataset(processed_dataset_id)
 
-        # Skip evaluation entirely if eval_strategy is "no"
-        if config.eval_config and config.eval_config.eval_strategy == "no":
-            eval_ds = None
-
         # 3. Model + tokenizer setup
         model, tokenizer = self._setup_model(config)
 
