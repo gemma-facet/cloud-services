@@ -22,7 +22,7 @@ class BaseTrainingService(ABC):
         train_ds, eval_ds = self._download_dataset(processed_dataset_id)
 
         # Skip eval entirely if strategy is no
-        if not config.eval_config or config.eval_config.strategy == "no":
+        if not config.eval_config or config.eval_config.eval_strategy == "no":
             eval_ds = None
 
         # 3. Model + tokenizer setup

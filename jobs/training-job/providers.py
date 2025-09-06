@@ -397,12 +397,15 @@ class HuggingFaceTrainingService(BaseTrainingService):
                 bias="none",
                 target_modules="all-linear",
                 task_type="CAUSAL_LM",
-                # modules_to_save=["lm_head", "embed_tokens"],
+                modules_to_save=["lm_head", "embed_tokens"],
+                inference_mode=False,
             )
 
             # NOTE: This can be easily extended to support PEFT other than LoRA
-
-            return self.get_peft_model(model, lora_config)
+            # This returns a PeftModel
+            model = self.get_peft_model(model, lora_config)
+            model.print_trainable_parameters()
+            return model
 
         logging.warning("No PEFT applied, using full model")
         return model
