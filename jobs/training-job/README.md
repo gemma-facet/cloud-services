@@ -11,16 +11,6 @@ Cloud Run job that executes fine-tuning on Gemma models.
 - **`storage.py`** - Model and dataset saving/loading from GCS/HF Hub
 - **`schema.py`** - Training configuration models
 
-## Deployment
-
-```bash
-gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
-```
-
-- Cloud Run job with GPU support (L4)
-- Memory: 32Gi, CPU: 8 cores
-- GPU: 1x NVIDIA L4
-
 ## Execution Flow
 
 1. **Start**: Job triggered by training service with `JOB_ID`
@@ -134,6 +124,8 @@ Configure evaluation during training:
 - **batch_eval_metrics**: Enable batch evaluation mode for better performance
 
 > If you want task-specific metrics, currently they are only supported in the inference service with the `evaluation` endpoint
+
+> If evaluation config is not provided or strategy is `no`, evaluation will be skipped entirely regardless of if eval dataset is provided
 
 ### Monitoring
 
@@ -263,6 +255,16 @@ I will update this later...
   "wandb_config": null
 }
 ```
+
+## Deployment
+
+```bash
+gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
+```
+
+- Cloud Run job with GPU support (L4)
+- Memory: 32Gi, CPU: 8 cores
+- GPU: 1x NVIDIA L4
 
 ## Known Issues
 

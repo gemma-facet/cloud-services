@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import List
 from abc import ABC, abstractmethod
 
@@ -81,19 +82,22 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
             AutoModelForCausalLM,
             AutoModelForImageTextToText,
             AutoTokenizer,
+            BitsAndBytesConfig,
         )
 
         # Model configuration
-        # NOTE: Does not need quantization_config because saved models already have one
         model_kwargs = get_model_device_config()
 
+        if model_type == "base":
+            # non base models already have quant config saved, but base model we always load bnb 4bit quant
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+
         # Load appropriate model class based on base model -- 1B and 270M, others including 3n are vision
-        if base_model_id in [
-            "google/gemma-3-1b-it",
-            "google/gemma-3-1b-pt",
-            "google/gemma-3-270m-it",
-            "google/gemma-3-270m-pt",
-        ]:
+        if "1b" in base_model_id or "270m" in base_model_id:
             # This can directly load adapter AND merged model, no need PEFT to load adapters explicitly
             model = AutoModelForCausalLM.from_pretrained(
                 resolved_model_path, **model_kwargs
@@ -217,11 +221,18 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth import FastModel
         from unsloth.chat_templates import get_chat_template
 
-        # no need to set load_in_4bit here, we follow the saved model config
-        model, tokenizer = FastModel.from_pretrained(
-            model_name=resolved_model_path,
-            max_seq_length=2048,
-        )
+        if model_type == "base":
+            model, tokenizer = FastModel.from_pretrained(
+                model_name=resolved_model_path,
+                load_in_4bit=True,
+                max_seq_length=2048,
+            )
+        else:
+            # no need to set load_in_4bit here, we follow the saved model config
+            model, tokenizer = FastModel.from_pretrained(
+                model_name=resolved_model_path,
+                max_seq_length=2048,
+            )
         FastModel.for_inference(model)
         tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
         tokenizer.pad_token = tokenizer.eos_token
@@ -241,6 +252,7 @@ class UnslothInferenceProvider(BaseInferenceProvider):
             **batch_inputs,
             max_new_tokens=256,
             temperature=1.0,
+            use_cache=True,
             top_p=0.95,
             top_k=64,
         )
@@ -262,10 +274,15 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth import FastVisionModel
         from unsloth.chat_templates import get_chat_template
 
-        model, processor = FastVisionModel.from_pretrained(
-            model_name=resolved_model_path,
-            load_in_4bit=True,
-        )
+        if model_type == "base":
+            model, processor = FastVisionModel.from_pretrained(
+                model_name=resolved_model_path,
+                load_in_4bit=True,
+            )
+        else:
+            model, processor = FastVisionModel.from_pretrained(
+                model_name=resolved_model_path
+            )
         FastVisionModel.for_inference(model)
         processor = get_chat_template(processor, chat_template="gemma-3")
 
@@ -280,7 +297,7 @@ class UnslothInferenceProvider(BaseInferenceProvider):
 
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=128,
+            max_new_tokens=256,
             use_cache=True,
             temperature=1.0,
             top_p=0.95,
@@ -309,6 +326,8 @@ class VLLMInferenceProvider(BaseInferenceProvider):
         messages: List,
         modality: str,
     ) -> List[str]:
+        # This ensure that we use V1 engine even when running as background process (experimental)
+        os.environ["VLLM_USE_V1"] = "1"
         if modality == "vision":
             return self._run_batch_inference_vision(
                 base_model_id, resolved_model_path, model_type, messages
@@ -356,7 +375,12 @@ class VLLMInferenceProvider(BaseInferenceProvider):
             model_path = (
                 resolved_model_path if model_type == "merged" else base_model_id
             )
-            llm = LLM(model=model_path)
+
+            # TODO: This is yet to be tested with vllm on-spot quantization with bnb, but supported on docs
+            if model_type == "base":
+                llm = LLM(model=model_path, quantization="bitsandbytes")
+            else:
+                llm = LLM(model=model_path)
             tokenizer = llm.get_tokenizer()
 
             # Apply ChatML template to each conversation
