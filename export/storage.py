@@ -183,7 +183,7 @@ class GCSStorageManager:
             final_filename: Final filename for the uploaded file (without extension)
 
         Returns:
-            str: GCS path to the uploaded file
+            str: Public URL to the uploaded file
 
         Raises:
             Exception: If upload fails
@@ -220,9 +220,9 @@ class GCSStorageManager:
 
             blob.upload_from_filename(local_file_path)
 
-            gcs_path = f"gs://{bucket_name}/{gcs_blob_path}"
-            self.logger.info(f"Successfully uploaded file to {gcs_path}")
-            return gcs_path
+            public_url = f"https://storage.googleapis.com/{bucket_name}/{gcs_blob_path}"
+            self.logger.info(f"Successfully uploaded file to {public_url}")
+            return public_url
 
         except Exception as e:
             self.logger.error(f"Failed to upload file {local_file_path}: {str(e)}")
@@ -240,7 +240,7 @@ class GCSStorageManager:
             final_filename: Final filename for the uploaded zip file (without .zip extension)
 
         Returns:
-            str: GCS path to the uploaded zip file
+            str: Public URL to the uploaded zip file
 
         Raises:
             Exception: If zip creation or upload fails
@@ -272,14 +272,14 @@ class GCSStorageManager:
                         self.logger.info(f"Added {file_path} to zip as {arcname}")
 
             # Upload zip file to GCS
-            gcs_path = self._upload_file(
+            public_url = self._upload_file(
                 zip_file_path, gcs_destination_path, final_filename
             )
 
             self.logger.info(
-                f"Successfully created and uploaded zip file to {gcs_path}"
+                f"Successfully created and uploaded zip file to {public_url}"
             )
-            return gcs_path
+            return public_url
 
         except Exception as e:
             self.logger.error(
