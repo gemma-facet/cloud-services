@@ -34,6 +34,7 @@ class JobResponse(BaseModel):
     export_status: Optional[str]
     job_id: str
     job_name: str
+    modality: Literal["text", "vision"]
 
 
 class JobsResponse(BaseModel):

@@ -147,6 +147,7 @@ async def get_jobs(current_user_id: str = Depends(get_current_user_id)):
                 export_status=job_data.get("export_status"),
                 job_id=job_data.get("job_id"),
                 job_name=job_data.get("job_name"),
+                modality=job_data.get("modality"),
             )
 
             completed_jobs.append(job_response)
@@ -226,6 +227,7 @@ async def get_job(job_id: str, current_user_id: str = Depends(get_current_user_i
             export_status=job_data.get("export_status"),
             job_id=job_data.get("job_id"),
             job_name=job_data.get("job_name"),
+            modality=job_data.get("modality"),
         )
 
         logging.info(f"Retrieved job {job_id} for user {current_user_id}")
