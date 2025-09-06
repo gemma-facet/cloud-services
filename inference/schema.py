@@ -1,15 +1,21 @@
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional, Literal, Union
 
+ModelType = Literal["adapter", "merged", "base"]
+
 
 class InferenceRequest(BaseModel):
     hf_token: str  # HF Token must be provided for Gemma models
-    # Path to the adapter (can be local path, GCS path, or HF Hub repo ID)
-    adapter_path: str
+    # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+    model_source: str
+    # Type of model: adapter, merged, or base model
+    model_type: ModelType
     # Base model ID to use for tokenizer and model class selection
     base_model_id: str
     # A single text message
     prompt: str
+    # Whether to use vLLM for inference (overrides default provider selection)
+    use_vllm: Optional[bool] = False
 
 
 class InferenceResponse(BaseModel):
@@ -18,12 +24,16 @@ class InferenceResponse(BaseModel):
 
 class BatchInferenceRequest(BaseModel):
     hf_token: str
-    # Path to the adapter (can be local path, GCS path, or HF Hub repo ID)
-    adapter_path: str
+    # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+    model_source: str
+    # Type of model: adapter, merged, or base model
+    model_type: ModelType
     # Base model ID to use for tokenizer and model class selection
     base_model_id: str
     # A list of conversations, where each conversation is a list of messages
     messages: List[List[Dict[str, Any]]]
+    # Whether to use vLLM for inference (overrides default provider selection)
+    use_vllm: Optional[bool] = False
 
 
 class BatchInferenceResponse(BaseModel):
@@ -49,8 +59,10 @@ MetricType = Literal[
 
 class EvaluationRequest(BaseModel):
     hf_token: str
-    # Path to the adapter (can be local path, GCS path, or HF Hub repo ID)
-    adapter_path: str
+    # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+    model_source: str
+    # Type of model: adapter, merged, or base model
+    model_type: ModelType
     # Base model ID to use for tokenizer and model class selection
     base_model_id: str
     # Dataset ID to evaluate on (must have an eval split)
@@ -63,6 +75,8 @@ class EvaluationRequest(BaseModel):
     max_samples: Optional[int] = None
     # Number of sample results to include in response (default: 3)
     num_sample_results: Optional[int] = 3
+    # Whether to use vLLM for inference (overrides default provider selection)
+    use_vllm: Optional[bool] = False
 
 
 class SampleResult(BaseModel):

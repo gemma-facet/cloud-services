@@ -336,7 +336,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
             )
 
         # Use AutoModelForImageTextToText or AutoModelForCausalLM based on model id, NOT modality!!
-        if base_model_id == "google/gemma-3-1b-it":
+        if "1b" in base_model_id or "270m" in base_model_id:
             model = self.AutoModelForCausalLM.from_pretrained(
                 base_model_id, **model_kwargs
             )
@@ -577,7 +577,7 @@ class UnslothTrainingService(BaseTrainingService):
     def __init__(self) -> None:
         # importing unsloth is unused but necessary for optimization
         import unsloth  # noqa: F401
-        from unsloth import FastModel, FastVisionModel, is_bfloat16_supported
+        from unsloth import FastLanguageModel, FastVisionModel, is_bfloat16_supported
         from unsloth.trainer import UnslothVisionDataCollator
         from unsloth.chat_templates import (
             get_chat_template,
@@ -594,7 +594,7 @@ class UnslothTrainingService(BaseTrainingService):
             DPOTrainer,
         )
 
-        self.FastModel = FastModel
+        self.FastLanguageModel = FastLanguageModel
         self.FastVisionModel = FastVisionModel
         self.is_bfloat16_supported = is_bfloat16_supported
         self.get_chat_template = get_chat_template
@@ -621,7 +621,7 @@ class UnslothTrainingService(BaseTrainingService):
             "unsloth/gemma-3n-E4B-it",
             "unsloth/gemma-3n-E2B",
             "unsloth/gemma-3n-E2B-it",
-            # Can't find 240m pt with unsloth
+            "unsloth/gemma-3-270m",
             "unsloth/gemma-3-270m-it",
             "unsloth/gemma-3-1b-pt-unsloth-bnb-4bit",
             "unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
@@ -635,7 +635,7 @@ class UnslothTrainingService(BaseTrainingService):
             "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit",
             "unsloth/gemma-3n-E2B-unsloth-bnb-4bit",
             "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit",
-            # "unsloth/gemma-3-240m-pt-unsloth-bnb-4bit",  # No PT version
+            "unsloth/gemma-3-240m-unsloth-bnb-4bit",
             "unsloth/gemma-3-270m-it-unsloth-bnb-4bit",
         ]
 
@@ -651,30 +651,33 @@ class UnslothTrainingService(BaseTrainingService):
                 f"Supported models: {self.supported_models}"
             )
 
+        # follows the pattern of huggingface examples
+        model_kwargs = {
+            "max_seq_length": cfg.hyperparameters.max_seq_length
+            if cfg.modality == "text"
+            else 2048,
+            "full_finetuning": True if cfg.method == "Full" else False,
+            "load_in_4bit": True if cfg.method == "QLoRA" else False,
+        }
+
         # Choose Unsloth model based on modality
         if cfg.modality == "vision":
-            if base_model_id == "unsloth/gemma-3-1b-it-unsloth-bnb-4bit":
+            if "gemma-3-1b" in base_model_id or "gemma-3-270m" in base_model_id:
                 raise ValueError(
                     "Gemma 3.1B does not support vision fine-tuning. Use Gemma 3.4B or larger."
                 )
 
             model, processor = self.FastVisionModel.from_pretrained(
-                # Load in 4-bit for consistency with HuggingFace
-                # NOTE: if you use unsloth you default to QLoRA lol
                 base_model_id,
-                load_in_4bit=True,
-                max_seq_length=2048,  # From docs
-                full_finetuning=True if cfg.method == "Full" else False,
+                **model_kwargs,
             )
             # Setup chat template for vision models
             processor = self.get_chat_template(processor, "gemma-3")
             return model, processor
         else:
-            model, tokenizer = self.FastModel.from_pretrained(
+            model, tokenizer = self.FastLanguageModel.from_pretrained(
                 base_model_id,
-                load_in_4bit=True,
-                max_seq_length=cfg.hyperparameters.max_seq_length,
-                full_finetuning=True if cfg.method == "Full" else False,
+                **model_kwargs,
             )
             # Setup chat template for text models
             tokenizer = self.get_chat_template(tokenizer, "gemma-3")
@@ -731,7 +734,7 @@ class UnslothTrainingService(BaseTrainingService):
                 modules_to_save=["lm_head", "embed_tokens"],
             )
         else:
-            model = self.FastModel.get_peft_model(
+            model = self.FastLanguageModel.get_peft_model(
                 model,
                 # target_modules=[
                 #     "q_proj",
@@ -750,6 +753,7 @@ class UnslothTrainingService(BaseTrainingService):
                 use_rslora=False,
                 loftq_config=None,
                 target_modules="all-linear",
+                modules_to_save=["lm_head", "embed_tokens"],
             )
 
         return model

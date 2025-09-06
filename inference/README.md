@@ -6,7 +6,7 @@ FastAPI service for running inference on fine-tuned Gemma models.
 
 - **`app.py`** - FastAPI application with endpoints
 - **`base.py`** - Core inference orchestration logic
-- **`providers.py`** - Inference provider implementations (HuggingFace, Unsloth)
+- **`providers.py`** - Inference provider implementations (HuggingFace, Unsloth, vLLM)
 - **`storage.py`** - Model loading from GCS/HuggingFace Hub
 - **`schema.py`** - Request/response models
 - **`evaluation.py`** - Evaluation logic for fine-tuned models using `evaluate`
@@ -23,9 +23,12 @@ gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
 
 ## Endpoints
 
+> [!NOTE]
+> Whenever `model_source` is referred to, it can be an adapter path, merged model path, or base model path. It can be either a GCS path or a HuggingFace Hub path. The `model_type` field explicitly specifies whether this is an "adapter", "merged", or "base" model. These are handled by 1. the storage logic and 2. the provider logic.
+
 ### POST `/inference`
 
-Single inference request. The service automatically detects storage type from the adapter path. Both `adapter_path` and `base_model_id` are accessible on the job object in the frontend because the training service returns these fields.
+Single inference request. The service automatically detects storage type from the model source. Both `model_source` and `base_model_id` are accessible on the job object in the frontend because the training service returns these fields.
 
 > This is for text only!!! You should use `/inference/batch` for more complex structure or vision fields, the messages can be obtained from the preprocessing service.
 
@@ -34,16 +37,23 @@ Single inference request. The service automatically detects storage type from th
 ```json
 {
   "hf_token": "hf_your_token_here",
-  "adapter_path": "/path/to/adapter",
+  "model_source": "/path/to/model",
+  "model_type": "adapter",
   "base_model_id": "google/gemma-3-2b-pt",
   "prompt": "Your input text here"
 }
 ```
 
-**Adapter Path Examples:**
+**Model Source Examples:**
 
 - **GCS path**: `gs://bucket/trained_adapters/job_123/adapter`
 - **HuggingFace Hub**: `username/model-name`
+
+**Model Type Values:**
+
+- **`"adapter"`**: LoRA/QLoRA adapter that needs to be loaded with base model
+- **`"merged"`**: Fully merged model with adapter weights integrated
+- **`"base"`**: Base model without any fine-tuning
 
 **Response:**
 
@@ -62,12 +72,14 @@ Batch inference for multiple conversations.
 ```json
 {
   "hf_token": "hf_your_token_here",
-  "adapter_path": "username/model-name",
+  "model_source": "username/model-name",
+  "model_type": "merged",
   "base_model_id": "google/gemma-3-2b-pt",
   "messages": [
     [{ "role": "user", "content": "What is the capital of France?" }],
     [{ "role": "user", "content": "Explain quantum computing." }]
-  ]
+  ],
+  "use_vllm": true
 }
 ```
 
@@ -86,7 +98,8 @@ Image field value should be a base64-encoded string, which can be obtained from 
 ```json
 {
   "hf_token": "hf_your_token_here",
-  "adapter_path": "username/model-name",
+  "model_source": "username/model-name",
+  "model_type": "adapter",
   "base_model_id": "google/gemma-3-2b-pt",
   "messages": [
     [
@@ -118,7 +131,8 @@ Evaluate a fine-tuned model on a dataset. You can use either **task types** (rec
 ```json
 {
   "hf_token": "hf_your_token_here",
-  "adapter_path": "username/model-name",
+  "model_source": "username/model-name",
+  "model_type": "merged",
   "base_model_id": "google/gemma-3-2b-pt",
   "dataset_id": "processed_dataset_123",
   "task_type": "conversation",
@@ -140,7 +154,8 @@ Evaluate a fine-tuned model on a dataset. You can use either **task types** (rec
 ```json
 {
   "hf_token": "hf_your_token_here",
-  "adapter_path": "username/model-name",
+  "model_source": "username/model-name",
+  "model_type": "adapter",
   "base_model_id": "google/gemma-3-2b-pt",
   "dataset_id": "processed_dataset_123",
   "metrics": ["bertscore", "rouge"],
@@ -199,6 +214,31 @@ Health check endpoint.
   "service": "inference"
 }
 ```
+
+## Inference Providers
+
+The service supports multiple inference providers for different use cases:
+
+### HuggingFace Transformers (`huggingface`)
+
+- **Use case**: Standard inference with HuggingFace models
+- **Supports**: Text and vision models, adapters and merged models
+- **Best for**: Most general use cases, well-tested compatibility
+
+### Unsloth (`unsloth`)
+
+- **Use case**: Optimized inference for Unsloth-trained models
+- **Supports**: Text and vision models, adapters and merged models
+- **Best for**: Models trained with Unsloth framework
+
+### vLLM (`vllm`)
+
+- **Use case**: High-performance inference with vLLM
+- **Supports**: Text and vision models, adapters (via LoRA) and merged models
+- **Best for**: High-throughput production inference
+- **Requirements**:
+  - For adapters: Uses LoRA requests with base model
+  - For merged/base: Direct model loading
 
 ## Environment
 
