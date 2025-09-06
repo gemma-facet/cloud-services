@@ -206,6 +206,7 @@ class EvaluationConfig(BaseModel):
     """Evaluation configuration during training"""
 
     # NOTE: Only specify eval_strategy if you actually provide eval_dataset
+    # specifying eval_strategy = no will override everything (i.e. even if you have a eval set)
     eval_strategy: Optional[str] = "no"  # "no", "steps", "epoch"
     eval_steps: Optional[int] = 50  # Required if eval_strategy="steps"
 

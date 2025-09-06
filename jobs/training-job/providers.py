@@ -9,7 +9,7 @@ from base import BaseTrainingService
 from rewards import load_reward_functions_from_config
 
 # from utils import create_compute_metrics, preprocess_logits_for_metrics
-from utils import create_compute_metrics
+from utils import create_compute_metrics, construct_full_model_id
 from schema import TrainingConfig
 
 
@@ -276,23 +276,6 @@ class HuggingFaceTrainingService(BaseTrainingService):
         self.DPOTrainer = DPOTrainer
         self.DPOConfig = DPOConfig
 
-        # Support both IT and PT models
-        # no official quantised so we apply them later with bnb
-        self.supported_models = [
-            "google/gemma-3-1b-pt",
-            "google/gemma-3-1b-it",
-            "google/gemma-3-4b-pt",
-            "google/gemma-3-4b-it",
-            "google/gemma-3-12b-pt",
-            "google/gemma-3-12b-it",
-            "google/gemma-3n-E2B",
-            "google/gemma-3n-E2B-it",
-            "google/gemma-3n-E4B",
-            "google/gemma-3n-E4B-it",
-            "google/gemma-3-270m",
-            "google/gemma-3-270m-it",
-        ]
-
         # dtype based on GPU
         if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
             self.torch_dtype = torch.bfloat16
@@ -309,12 +292,11 @@ class HuggingFaceTrainingService(BaseTrainingService):
         1. If base_model_id is not 1b then use AutoModelForImageTextToText, else use AutoModelForCausalLM
         2. If modality is vision, use AutoProcessor otherwise use AutoTokenizer
         """
-        base_model_id = cfg.base_model_id or "google/gemma-3-1b-it"
-        if base_model_id not in self.supported_models:
-            raise ValueError(
-                f"Unsupported base model {cfg.base_model_id}. "
-                f"Supported models: {self.supported_models}"
-            )
+        # Construct the full model ID with proper namespace
+        full_model_id = construct_full_model_id(
+            cfg.base_model_id, cfg.provider, cfg.method
+        )
+        logging.info(f"Loading model: {full_model_id}")
 
         # Model kwargs for both text and vision
         model_kwargs = {
@@ -336,31 +318,31 @@ class HuggingFaceTrainingService(BaseTrainingService):
             )
 
         # Use AutoModelForImageTextToText or AutoModelForCausalLM based on model id, NOT modality!!
-        if base_model_id == "google/gemma-3-1b-it":
+        if "gemma-3-1b" in full_model_id or "gemma-3-270m" in full_model_id:
             model = self.AutoModelForCausalLM.from_pretrained(
-                base_model_id, **model_kwargs
+                full_model_id, **model_kwargs
             )
         else:
             model = self.AutoModelForImageTextToText.from_pretrained(
-                base_model_id, **model_kwargs
+                full_model_id, **model_kwargs
             )
 
         # Setup tokenizer or preprocessor based on modality
         if cfg.modality == "vision":
-            if base_model_id == "google/gemma-3-1b-it":
+            if "gemma-3-1b" in cfg.base_model_id or "gemma-3-270m" in cfg.base_model_id:
                 raise ValueError(
                     "Gemma 3.1B does not support vision fine-tuning. Use Gemma 3.4B or larger."
                 )
 
             # Vision models use AutoProcessor
             processor = self.AutoProcessor.from_pretrained(
-                base_model_id, trust_remote_code=True
+                full_model_id, trust_remote_code=True
             )
             processor.tokenizer.padding_side = "right"
 
             return model, processor
         else:
-            tokenizer = self.AutoTokenizer.from_pretrained(base_model_id)
+            tokenizer = self.AutoTokenizer.from_pretrained(full_model_id)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
 
@@ -577,7 +559,7 @@ class UnslothTrainingService(BaseTrainingService):
     def __init__(self) -> None:
         # importing unsloth is unused but necessary for optimization
         import unsloth  # noqa: F401
-        from unsloth import FastModel, FastVisionModel, is_bfloat16_supported
+        from unsloth import FastLanguageModel, FastVisionModel, is_bfloat16_supported
         from unsloth.trainer import UnslothVisionDataCollator
         from unsloth.chat_templates import (
             get_chat_template,
@@ -593,8 +575,9 @@ class UnslothTrainingService(BaseTrainingService):
             DPOConfig,
             DPOTrainer,
         )
+        from transformers import AutoProcessor
 
-        self.FastModel = FastModel
+        self.FastLanguageModel = FastLanguageModel
         self.FastVisionModel = FastVisionModel
         self.is_bfloat16_supported = is_bfloat16_supported
         self.get_chat_template = get_chat_template
@@ -608,73 +591,55 @@ class UnslothTrainingService(BaseTrainingService):
         self.GRPOTrainer = GRPOTrainer
         self.DPOConfig = DPOConfig
         self.DPOTrainer = DPOTrainer
-
-        # Haven't tested 270M will add that later
-        self.supported_models = [
-            "unsloth/gemma-3-1b-pt",
-            "unsloth/gemma-3-1b-it",
-            "unsloth/gemma-3-4b-pt",
-            "unsloth/gemma-3-4b-it",
-            "unsloth/gemma-3-12b-pt",
-            "unsloth/gemma-3-12b-it",
-            "unsloth/gemma-3n-E4B",
-            "unsloth/gemma-3n-E4B-it",
-            "unsloth/gemma-3n-E2B",
-            "unsloth/gemma-3n-E2B-it",
-            # Can't find 240m pt with unsloth
-            "unsloth/gemma-3-270m-it",
-            "unsloth/gemma-3-1b-pt-unsloth-bnb-4bit",
-            "unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
-            "unsloth/gemma-3-4b-pt-unsloth-bnb-4bit",
-            "unsloth/gemma-3-4b-it-unsloth-bnb-4bit",
-            "unsloth/gemma-3-12b-pt-unsloth-bnb-4bit",
-            "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
-            # "unsloth/gemma-3-27b-pt-unsloth-bnb-4bit",
-            # "unsloth/gemma-3-27b-it-unsloth-bnb-4bit",
-            "unsloth/gemma-3n-E4B-unsloth-bnb-4bit",
-            "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit",
-            "unsloth/gemma-3n-E2B-unsloth-bnb-4bit",
-            "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit",
-            # "unsloth/gemma-3-240m-pt-unsloth-bnb-4bit",  # No PT version
-            "unsloth/gemma-3-270m-it-unsloth-bnb-4bit",
-        ]
+        self.AutoProcessor = AutoProcessor
 
     # Hooks for Template Method:
     def _download_dataset(self, dataset_id: str) -> Tuple[Any, Any]:
         return storage_service.download_processed_dataset(dataset_id)
 
     def _setup_model(self, cfg: TrainingConfig) -> Tuple[Any, Any]:
-        base_model_id = cfg.base_model_id or "unsloth/gemma-3-1b-it-unsloth-bnb-4bit"
-        if base_model_id not in self.supported_models:
-            raise ValueError(
-                f"Unsupported base model {base_model_id}. "
-                f"Supported models: {self.supported_models}"
-            )
+        # Construct the full model ID with proper namespace
+        full_model_id = construct_full_model_id(
+            cfg.base_model_id, cfg.provider, cfg.method
+        )
+        logging.info(f"Loading model: {full_model_id}")
+
+        # follows the pattern of huggingface examples
+        model_kwargs = {
+            "max_seq_length": cfg.hyperparameters.max_seq_length
+            if cfg.modality == "text"
+            else 2048,
+            "full_finetuning": True if cfg.method == "Full" else False,
+            "load_in_4bit": True if cfg.method == "QLoRA" else False,
+        }
 
         # Choose Unsloth model based on modality
         if cfg.modality == "vision":
-            if base_model_id == "unsloth/gemma-3-1b-it-unsloth-bnb-4bit":
+            if "gemma-3-1b" in full_model_id or "gemma-3-270m" in full_model_id:
                 raise ValueError(
                     "Gemma 3.1B does not support vision fine-tuning. Use Gemma 3.4B or larger."
                 )
 
             model, processor = self.FastVisionModel.from_pretrained(
-                # Load in 4-bit for consistency with HuggingFace
-                # NOTE: if you use unsloth you default to QLoRA lol
-                base_model_id,
-                load_in_4bit=True,
-                max_seq_length=2048,  # From docs
-                full_finetuning=True if cfg.method == "Full" else False,
+                full_model_id,
+                **model_kwargs,
             )
             # Setup chat template for vision models
             processor = self.get_chat_template(processor, "gemma-3")
+
+            # Unsloth's trainer bugs with TRL DPOTrainer due to returning wrong dimension of input_ids
+            # This problem doesn't happen with tokenizer but with processor, need to load processor separately
+            # NOTE: HOWEVER, it still doesn't work since the next problem is DPOTrainer does not call process_row lol
+            # if cfg.trainer_type == "dpo":
+            #     processor = self.AutoProcessor.from_pretrained(
+            #         full_model_id, trust_remote_code=True
+            #     )
+
             return model, processor
         else:
-            model, tokenizer = self.FastModel.from_pretrained(
-                base_model_id,
-                load_in_4bit=True,
-                max_seq_length=cfg.hyperparameters.max_seq_length,
-                full_finetuning=True if cfg.method == "Full" else False,
+            model, tokenizer = self.FastLanguageModel.from_pretrained(
+                full_model_id,
+                **model_kwargs,
             )
             # Setup chat template for text models
             tokenizer = self.get_chat_template(tokenizer, "gemma-3")
@@ -731,7 +696,7 @@ class UnslothTrainingService(BaseTrainingService):
                 modules_to_save=["lm_head", "embed_tokens"],
             )
         else:
-            model = self.FastModel.get_peft_model(
+            model = self.FastLanguageModel.get_peft_model(
                 model,
                 # target_modules=[
                 #     "q_proj",
