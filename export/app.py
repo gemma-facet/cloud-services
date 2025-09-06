@@ -139,6 +139,18 @@ async def export(
         logging.error(f"Failed to verify job ownership: {e}")
         raise HTTPException(status_code=500, detail="Failed to verify job ownership")
 
+    # Update export_status to indicate export is in progress
+    try:
+        db.collection("training_jobs").document(request.job_id).update(
+            {"export_status": request.export_type}
+        )
+        logging.info(
+            f"Updated export_status to '{request.export_type}' for job {request.job_id}"
+        )
+    except Exception as e:
+        logging.error(f"Failed to update export_status for job {request.job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update export status")
+
     # Handle export based on type
     try:
         # Get export data from Firestore
@@ -150,6 +162,19 @@ async def export(
             logging.info(
                 f"{request.export_type.title()} export: returning existing path for job {request.job_id}"
             )
+            # Clear export_status since we're returning existing export
+            try:
+                db.collection("training_jobs").document(request.job_id).update(
+                    {"export_status": None}
+                )
+                logging.info(
+                    f"Cleared export_status for job {request.job_id} (existing export)"
+                )
+            except Exception as e:
+                logging.error(
+                    f"Failed to clear export_status for job {request.job_id}: {e}"
+                )
+
             return ExportResponse(
                 success=True,
                 job_id=request.job_id,
@@ -219,6 +244,19 @@ async def export(
                 detail=f"Unsupported export type: {request.export_type}",
             )
 
+        # Clear export_status on successful completion
+        try:
+            db.collection("training_jobs").document(request.job_id).update(
+                {"export_status": None}
+            )
+            logging.info(
+                f"Cleared export_status for job {request.job_id} (export completed successfully)"
+            )
+        except Exception as e:
+            logging.error(
+                f"Failed to clear export_status for job {request.job_id}: {e}"
+            )
+
         return ExportResponse(
             success=True,
             job_id=request.job_id,
@@ -229,11 +267,36 @@ async def export(
         )
 
     except HTTPException:
+        # Clear export_status on HTTP exceptions
+        try:
+            db.collection("training_jobs").document(request.job_id).update(
+                {"export_status": None}
+            )
+            logging.info(
+                f"Cleared export_status for job {request.job_id} (HTTP exception occurred)"
+            )
+        except Exception as clear_error:
+            logging.error(
+                f"Failed to clear export_status for job {request.job_id}: {clear_error}"
+            )
         raise
     except Exception as e:
         logging.error(
             f"Failed to export {request.export_type} for job {request.job_id}: {str(e)}"
         )
+        # Clear export_status on general exceptions
+        try:
+            db.collection("training_jobs").document(request.job_id).update(
+                {"export_status": None}
+            )
+            logging.info(
+                f"Cleared export_status for job {request.job_id} (exception occurred)"
+            )
+        except Exception as clear_error:
+            logging.error(
+                f"Failed to clear export_status for job {request.job_id}: {clear_error}"
+            )
+
         raise HTTPException(
             status_code=500, detail=f"Failed to export {request.export_type}: {str(e)}"
         )
