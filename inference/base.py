@@ -1,6 +1,5 @@
 import logging
 import time
-import torch
 import io
 import base64
 from typing import List, Dict, Any
@@ -33,11 +32,13 @@ class InferenceOrchestrator:
             BaseInferenceProvider,
             HuggingFaceInferenceProvider,
             UnslothInferenceProvider,
+            VLLMInferenceProvider,
         )
 
         self.providers: Dict[str, BaseInferenceProvider] = {
             "huggingface": HuggingFaceInferenceProvider(),
             "unsloth": UnslothInferenceProvider(),
+            "vllm": VLLMInferenceProvider(),
         }
 
     def _convert_messages_for_display(
@@ -129,103 +130,134 @@ class InferenceOrchestrator:
 
         return str(img_data)  # Fallback
 
-    def run_inference(self, adapter_path: str, base_model_id: str, prompt: str) -> str:
+    def run_inference(
+        self,
+        model_source: str,
+        model_type: str,
+        base_model_id: str,
+        prompt: str,
+        use_vllm: bool = False,
+    ) -> str:
         """
-        Run inference with the given adapter and base model.
+        Run inference with the given model and base model.
 
         Args:
-            adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+            model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+            model_type (str): Type of model ("adapter", "merged", or "base")
             base_model_id (str): Base model identifier
             prompt (str): Input text to generate a response for
+            use_vllm (bool): Whether to use vLLM for inference
 
         Returns:
             str: Generated text response from the model
         """
         return self.run_batch_inference(
-            adapter_path, base_model_id, [[{"role": "user", "content": prompt}]]
+            model_source,
+            model_type,
+            base_model_id,
+            [[{"role": "user", "content": prompt}]],
+            use_vllm,
         )[0]
 
     def run_batch_inference(
-        self, adapter_path: str, base_model_id: str, messages: List
+        self,
+        model_source: str,
+        model_type: str,
+        base_model_id: str,
+        messages: List,
+        use_vllm: bool = False,
     ) -> List[str]:
         """
-        Run generation for a batch of messages with the given adapter and base model.
+        Run generation for a batch of messages with the given model and base model.
 
         Args:
-            adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+            model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+            model_type (str): Type of model ("adapter", "merged", or "base")
             base_model_id (str): Base model identifier
             messages (list): List of input message conversations to generate responses for
+            use_vllm (bool): Whether to use vLLM for inference
 
         Returns:
             list[str]: List of generated text responses from the model
         """
-        logger.info(f"Starting batch inference for adapter: {adapter_path}")
+        logger.info(
+            f"Starting batch inference for model: {model_source} (type: {model_type}, vLLM: {use_vllm})"
+        )
         start_time = time.time()
 
         # Determine storage type and handle model loading
-        storage_type = infer_storage_type_from_path(adapter_path)
+        storage_type = infer_storage_type_from_path(model_source)
 
         if storage_type == "local":
             raise ValueError(
-                "local inference is not yet supported, provide adapter path from gcs or hf hub"
+                "local inference is not yet supported, provide model path from gcs or hf hub"
             )
         else:
             # Need to use storage strategy for GCS or handle HF Hub
             strategy = StorageStrategyFactory.create_strategy(storage_type)
             if storage_type == "gcs":
-                artifact = strategy.load_model_info(adapter_path)
-                final_adapter_path = artifact.local_path
+                artifact = strategy.load_model_info(model_source)
+                resolved_model_path = artifact.local_path
                 provider_key = artifact.provider
             else:  # hfhub
-                artifact = strategy.load_model_info(adapter_path)
-                final_adapter_path = artifact.remote_path
+                artifact = strategy.load_model_info(model_source)
+                resolved_model_path = artifact.remote_path
                 provider_key = (
                     "unsloth" if base_model_id.startswith("unsloth/") else "huggingface"
                 )
 
         # Determine modality and provider
         modality = infer_modality_from_messages(messages)
+
+        # Override provider selection if vLLM is explicitly requested
+        if use_vllm:
+            provider_key = "vllm"
+
         provider = self.providers.get(provider_key, "huggingface")
 
         try:
             outputs = provider.run_batch_inference(
-                base_model_id, final_adapter_path, messages, modality
+                base_model_id, resolved_model_path, model_type, messages, modality
             )
         except Exception as e:
             logger.error(f"Batch inference failed with error: {str(e)}", exc_info=True)
             raise e
         finally:
+            # Provider cleanup is handled within each provider's run_batch_inference method
+            # Additional cleanup for storage artifacts
             if artifact:
                 strategy.cleanup(artifact)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         logger.info(
-            f"Batch inference for {adapter_path} completed in {time.time() - start_time:.2f} seconds."
+            f"Batch inference for {model_source} completed in {time.time() - start_time:.2f} seconds."
         )
         return outputs
 
     def run_evaluation(
         self,
-        adapter_path: str,
+        model_source: str,
+        model_type: str,
         base_model_id: str,
         dataset_id: str,
         task_type: str = None,
         metrics: List[str] = None,
         max_samples: int = None,
         num_sample_results: int = 3,
+        use_vllm: bool = False,
     ) -> Dict[str, Any]:
         """
         Run evaluation of a fine-tuned model on a dataset.
 
         Args:
-            adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+            model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+            model_type (str): Type of model ("adapter", "merged", or "base")
             base_model_id (str): Base model identifier
             dataset_id (str): Dataset ID to evaluate on (must have eval split)
             task_type (str, optional): Task type for predefined metric suite
             metrics (List[str], optional): Specific list of metrics to compute
             max_samples (int, optional): Maximum number of samples to evaluate
             num_sample_results (int, optional): Number of sample results to include
+            use_vllm (bool): Whether to use vLLM for inference
 
         Returns:
             Dict containing evaluation results and metadata
@@ -237,7 +269,7 @@ class InferenceOrchestrator:
         from storage import storage_service
 
         logger.info(
-            f"Starting evaluation for adapter: {adapter_path} on dataset: {dataset_id}"
+            f"Starting evaluation for model: {model_source} (type: {model_type}) on dataset: {dataset_id}"
         )
         start_time = time.time()
 
@@ -269,7 +301,7 @@ class InferenceOrchestrator:
         # Generate predictions using batch inference
         try:
             predictions = self.run_batch_inference(
-                adapter_path, base_model_id, eval_messages
+                model_source, model_type, base_model_id, eval_messages, use_vllm
             )
         except Exception as e:
             logger.error(f"Error during batch inference for evaluation: {e}")
@@ -322,72 +354,94 @@ class InferenceOrchestrator:
 inference_orchestrator = InferenceOrchestrator()
 
 
-def run_inference(adapter_path: str, base_model_id: str, prompt: str) -> str:
+def run_inference(
+    model_source: str,
+    model_type: str,
+    base_model_id: str,
+    prompt: str,
+    use_vllm: bool = False,
+) -> str:
     """
     Convenience function for running inference with different storage backends.
     **This is just a wrapper around the batch inference function!**
 
     Args:
-        adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+        model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+        model_type (str): Type of model ("adapter", "merged", or "base")
         base_model_id (str): Base model identifier
         prompt (str): Input text to generate a response for
+        use_vllm (bool): Whether to use vLLM for inference
 
     Returns:
         str: Generated text response from the model
     """
-    return inference_orchestrator.run_inference(adapter_path, base_model_id, prompt)
+    return inference_orchestrator.run_inference(
+        model_source, model_type, base_model_id, prompt, use_vllm
+    )
 
 
 def run_batch_inference(
-    adapter_path: str, base_model_id: str, messages: List
+    model_source: str,
+    model_type: str,
+    base_model_id: str,
+    messages: List,
+    use_vllm: bool = False,
 ) -> List[str]:
     """
     Convenience function for running batch inference with different storage backends.
     Handles model loading and output generation for both GCS and HF Hub.
 
     Args:
-        adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+        model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+        model_type (str): Type of model ("adapter", "merged", or "base")
         base_model_id (str): Base model identifier
         messages (list): List of input texts or formatted messages to generate responses for
+        use_vllm (bool): Whether to use vLLM for inference
 
     Returns:
         list[str]: List of generated text responses from the model
     """
     return inference_orchestrator.run_batch_inference(
-        adapter_path, base_model_id, messages
+        model_source, model_type, base_model_id, messages, use_vllm
     )
 
 
 def run_evaluation(
-    adapter_path: str,
+    model_source: str,
+    model_type: str,
     base_model_id: str,
     dataset_id: str,
     task_type: str = None,
     metrics: List[str] = None,
     max_samples: int = None,
     num_sample_results: int = 3,
+    use_vllm: bool = False,
 ) -> Dict[str, Any]:
     """
     Convenience function for running evaluation with different storage backends.
 
     Args:
-        adapter_path (str): Path to adapter (local, GCS, or HF Hub repo ID)
+        model_source (str): Storage path or identifier (GCS path, HF Hub repo ID, or local path)
+        model_type (str): Type of model ("adapter", "merged", or "base")
         base_model_id (str): Base model identifier
         dataset_id (str): Dataset ID to evaluate on (must have eval split)
         task_type (str, optional): Task type for predefined metric suite
         metrics (List[str], optional): Specific list of metrics to compute
         max_samples (int, optional): Maximum number of samples to evaluate
         num_sample_results (int, optional): Number of sample results to include
+        use_vllm (bool): Whether to use vLLM for inference
 
     Returns:
         Dict containing evaluation results and metadata
     """
     return inference_orchestrator.run_evaluation(
-        adapter_path,
+        model_source,
+        model_type,
         base_model_id,
         dataset_id,
         task_type,
         metrics,
         max_samples,
         num_sample_results,
+        use_vllm,
     )

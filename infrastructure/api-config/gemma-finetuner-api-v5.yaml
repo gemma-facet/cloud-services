@@ -15,6 +15,7 @@ paths:
       x-google-backend:
         address: https://preprocessing-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -29,6 +30,7 @@ paths:
       x-google-backend:
         address: https://preprocessing-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -48,6 +50,7 @@ paths:
       x-google-backend:
         address: https://preprocessing-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -61,6 +64,7 @@ paths:
       x-google-backend:
         address: https://preprocessing-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -82,6 +86,7 @@ paths:
       x-google-backend:
         address: https://training-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -97,6 +102,7 @@ paths:
       x-google-backend:
         address: https://training-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -111,6 +117,7 @@ paths:
       x-google-backend:
         address: https://training-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -124,6 +131,7 @@ paths:
       x-google-backend:
         address: https://training-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -145,6 +153,7 @@ paths:
       x-google-backend:
         address: https://inference-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -165,6 +174,7 @@ paths:
       x-google-backend:
         address: https://inference-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:
@@ -186,6 +196,7 @@ paths:
       x-google-backend:
         address: https://inference-service-10987549752.us-central1.run.app
         path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 60.0
       security:
         - firebase: []
       responses:

@@ -116,19 +116,21 @@ async def inference(
     request: InferenceRequest,
     current_user_id: str = Depends(get_current_user_id),
 ):
-    """Run inference using a trained adapter"""
+    """Run inference using a trained model"""
     try:
         login_hf(request.hf_token)
         output = await run_in_threadpool(
             run_inference,
-            request.adapter_path,
+            request.model_source,
+            request.model_type,
             request.base_model_id,
             request.prompt,
+            request.use_vllm,
         )
         return {"result": output}
     except FileNotFoundError:
-        logging.error(f"Adapter {request.adapter_path} not found")
-        raise HTTPException(status_code=404, detail="Adapter not found")
+        logging.error(f"Model {request.model_source} not found")
+        raise HTTPException(status_code=404, detail="Model not found")
     except Exception as e:
         logging.error(f"Inference failed with error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -139,7 +141,7 @@ async def batch_inference(
     request: BatchInferenceRequest,
     current_user_id: str = Depends(get_current_user_id),
 ):
-    """Run batch inference using a trained adapter"""
+    """Run batch inference using a trained model"""
     messages = request.messages
     if not messages or not isinstance(messages, list) or len(messages) == 0:
         raise HTTPException(status_code=400, detail="messages (list) is required")
@@ -147,14 +149,16 @@ async def batch_inference(
         login_hf(request.hf_token)
         outputs = await run_in_threadpool(
             run_batch_inference,
-            request.adapter_path,
+            request.model_source,
+            request.model_type,
             request.base_model_id,
             messages,
+            request.use_vllm,
         )
         return {"results": outputs}
     except FileNotFoundError:
-        logging.error(f"Adapter {request.adapter_path} not found")
-        raise HTTPException(status_code=404, detail="Adapter not found")
+        logging.error(f"Model {request.model_source} not found")
+        raise HTTPException(status_code=404, detail="Model not found")
     except Exception as e:
         logging.error(f"Batch inference failed with error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -183,13 +187,15 @@ async def evaluation(
         login_hf(request.hf_token)
         result = await run_in_threadpool(
             run_evaluation,
-            request.adapter_path,
+            request.model_source,
+            request.model_type,
             request.base_model_id,
             request.dataset_id,
             request.task_type,
             request.metrics,
             request.max_samples,
             request.num_sample_results or 3,
+            request.use_vllm,
         )
         return {
             "metrics": result["metrics"],

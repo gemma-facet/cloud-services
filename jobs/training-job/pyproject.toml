@@ -5,22 +5,22 @@ description = "Training job"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "torch>=2.6.0",
+    "torch>=2.7.1",
     "accelerate>=1.4.0",
     "google-cloud-storage==2.10.0",
     "google-cloud-firestore>=2.11.0",
-    "bitsandbytes>=0.45.3",
+    "bitsandbytes==0.47.0",
     "datasets>=3.4.1",
     "huggingface-hub>=0.32.4",
-    "peft==0.14.0",
-    "transformers>=4.54.1",
+    "peft>=0.14.0",
+    "transformers>=4.56.0",
     "trl>=0.21.0",
-    "fastapi==0.104.1",
+    "fastapi>=0.104.1",
     "uvicorn[standard]==0.24.0",
     "wandb",
-    "unsloth>=2025.8.8",
-    "unsloth_zoo>=2025.8.8",
-    "xformers==0.0.29.post3",
+    "unsloth>=2025.9.1",
+    "unsloth_zoo>=2025.9.1",
+    "xformers>=0.0.29.post3",
     "pillow>=10.0.0",
     "google-genai>=1.4.0",
     "math-verify",
@@ -30,17 +30,17 @@ dependencies = [
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu124" },
+  { index = "pytorch-cu126" },
 ]
 torchvision = [
-  { index = "pytorch-cu124" },
+  { index = "pytorch-cu126" },
 ]
 torchaudio = [
-  { index = "pytorch-cu124" },
+  { index = "pytorch-cu126" },
 ]
