@@ -932,7 +932,7 @@ requires-dist = [
     { name = "google-cloud-storage", specifier = "==2.10.0" },
     { name = "huggingface-hub", specifier = ">=0.32.4" },
     { name = "nltk", specifier = ">=3.9.1" },
-    { name = "peft", specifier = "==0.14.0" },
+    { name = "peft", specifier = ">=0.14.0" },
     { name = "rouge-score", specifier = ">=0.1.2" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "torch", specifier = ">=2.7.1", index = "https://download.pytorch.org/whl/cu126" },

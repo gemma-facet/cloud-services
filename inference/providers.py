@@ -1,5 +1,6 @@
 import logging
-import os
+import gc
+import torch
 from typing import List
 from abc import ABC, abstractmethod
 
@@ -43,6 +44,16 @@ class BaseInferenceProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def cleanup_memory(self):
+        """
+        Clean up memory resources after inference.
+
+        Each provider should implement provider-specific cleanup logic
+        to free GPU/CPU memory and prevent memory leaks.
+        """
+        pass
+
 
 class HuggingFaceInferenceProvider(BaseInferenceProvider):
     """
@@ -51,6 +62,11 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
     Handles inference for models using the standard HuggingFace Transformers library.
     Supports both text-only and vision models with appropriate model classes and processors.
     """
+
+    def __init__(self):
+        self.current_model = None
+        self.current_tokenizer = None
+        self.current_processor = None
 
     def run_batch_inference(
         self,
@@ -61,14 +77,44 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         modality: str,
     ) -> List[str]:
         """Run batch inference using HuggingFace Transformers"""
-        if modality == "vision":
-            return self._run_batch_inference_vision(
-                base_model_id, resolved_model_path, model_type, messages
-            )
-        else:
-            return self._run_batch_inference_text(
-                base_model_id, resolved_model_path, model_type, messages
-            )
+        try:
+            if modality == "vision":
+                return self._run_batch_inference_vision(
+                    base_model_id, resolved_model_path, model_type, messages
+                )
+            else:
+                return self._run_batch_inference_text(
+                    base_model_id, resolved_model_path, model_type, messages
+                )
+        finally:
+            # Always cleanup after inference
+            self.cleanup_memory()
+
+    def cleanup_memory(self):
+        """Clean up HuggingFace model memory resources"""
+        logger.info("Cleaning up HuggingFace model memory...")
+
+        # Delete model references
+        if self.current_model is not None:
+            del self.current_model
+            self.current_model = None
+
+        if self.current_tokenizer is not None:
+            del self.current_tokenizer
+            self.current_tokenizer = None
+
+        if self.current_processor is not None:
+            del self.current_processor
+            self.current_processor = None
+
+        # Force garbage collection
+        gc.collect()
+
+        # Clear CUDA cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info("CUDA cache cleared")
 
     def _run_batch_inference_text(
         self,
@@ -99,34 +145,34 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         # Load appropriate model class based on base model -- 1B and 270M, others including 3n are vision
         if "1b" in base_model_id or "270m" in base_model_id:
             # This can directly load adapter AND merged model, no need PEFT to load adapters explicitly
-            model = AutoModelForCausalLM.from_pretrained(
+            self.current_model = AutoModelForCausalLM.from_pretrained(
                 resolved_model_path, **model_kwargs
             )
         else:
-            model = AutoModelForImageTextToText.from_pretrained(
+            self.current_model = AutoModelForImageTextToText.from_pretrained(
                 resolved_model_path, **model_kwargs
             )
 
-        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        self.current_tokenizer = AutoTokenizer.from_pretrained(base_model_id)
 
         # Prepare inputs
         chat_messages = [
-            tokenizer.apply_chat_template(
+            self.current_tokenizer.apply_chat_template(
                 message,
                 tokenize=False,
                 add_generation_prompt=True,
             )
             for message in messages
         ]
-        tokenizer.pad_token = tokenizer.eos_token
-        batch_inputs = tokenizer(chat_messages, return_tensors="pt", padding=True).to(
-            model.device
-        )
+        self.current_tokenizer.pad_token = self.current_tokenizer.eos_token
+        batch_inputs = self.current_tokenizer(
+            chat_messages, return_tensors="pt", padding=True
+        ).to(self.current_model.device)
 
         # Generate
-        stop_tokens = get_stop_tokens(tokenizer)
+        stop_tokens = get_stop_tokens(self.current_tokenizer)
         input_length = batch_inputs.input_ids.shape[1]
-        generated_ids = model.generate(
+        generated_ids = self.current_model.generate(
             **batch_inputs,
             max_new_tokens=512,
             do_sample=False,
@@ -135,7 +181,7 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         )
 
         # Decode output
-        decoded = tokenizer.batch_decode(
+        decoded = self.current_tokenizer.batch_decode(
             generated_ids[:, input_length:], skip_special_tokens=True
         )
         return decoded
@@ -162,22 +208,22 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
             bnb_4bit_quant_type="nf4",
         )
 
-        model = AutoModelForImageTextToText.from_pretrained(
+        self.current_model = AutoModelForImageTextToText.from_pretrained(
             resolved_model_path, **model_kwargs
         )
-        processor = AutoProcessor.from_pretrained(base_model_id)
+        self.current_processor = AutoProcessor.from_pretrained(base_model_id)
 
-        images, texts = prepare_vision_inputs(processor, messages)
+        images, texts = prepare_vision_inputs(self.current_processor, messages)
 
-        inputs = processor(
+        inputs = self.current_processor(
             text=texts,
             images=images,
             return_tensors="pt",
             padding=True,
-        ).to(model.device)
+        ).to(self.current_model.device)
 
-        generated_ids = model.generate(**inputs, max_new_tokens=128)
-        decoded = processor.batch_decode(
+        generated_ids = self.current_model.generate(**inputs, max_new_tokens=128)
+        decoded = self.current_processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )
         return decoded
@@ -191,6 +237,11 @@ class UnslothInferenceProvider(BaseInferenceProvider):
     optimized training and inference for LLMs. Supports both text and vision models.
     """
 
+    def __init__(self):
+        self.current_model = None
+        self.current_tokenizer = None
+        self.current_processor = None
+
     def run_batch_inference(
         self,
         base_model_id: str,
@@ -200,14 +251,44 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         modality: str,
     ) -> List[str]:
         """Run batch inference using Unsloth"""
-        if modality == "vision":
-            return self._run_batch_inference_vision(
-                base_model_id, resolved_model_path, model_type, messages
-            )
-        else:
-            return self._run_batch_inference_text(
-                base_model_id, resolved_model_path, model_type, messages
-            )
+        try:
+            if modality == "vision":
+                return self._run_batch_inference_vision(
+                    base_model_id, resolved_model_path, model_type, messages
+                )
+            else:
+                return self._run_batch_inference_text(
+                    base_model_id, resolved_model_path, model_type, messages
+                )
+        finally:
+            # Always cleanup after inference
+            self.cleanup_memory()
+
+    def cleanup_memory(self):
+        """Clean up Unsloth model memory resources"""
+        logger.info("Cleaning up Unsloth model memory...")
+
+        # Delete model references
+        if self.current_model is not None:
+            del self.current_model
+            self.current_model = None
+
+        if self.current_tokenizer is not None:
+            del self.current_tokenizer
+            self.current_tokenizer = None
+
+        if self.current_processor is not None:
+            del self.current_processor
+            self.current_processor = None
+
+        # Force garbage collection
+        gc.collect()
+
+        # Clear CUDA cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info("CUDA cache cleared")
 
     def _run_batch_inference_text(
         self,
@@ -222,33 +303,35 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth.chat_templates import get_chat_template
 
         if model_type == "base":
-            model, tokenizer = FastModel.from_pretrained(
+            self.current_model, self.current_tokenizer = FastModel.from_pretrained(
                 model_name=resolved_model_path,
                 load_in_4bit=True,
                 max_seq_length=2048,
             )
         else:
             # no need to set load_in_4bit here, we follow the saved model config
-            model, tokenizer = FastModel.from_pretrained(
+            self.current_model, self.current_tokenizer = FastModel.from_pretrained(
                 model_name=resolved_model_path,
                 max_seq_length=2048,
             )
-        FastModel.for_inference(model)
-        tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
-        tokenizer.pad_token = tokenizer.eos_token
+        FastModel.for_inference(self.current_model)
+        self.current_tokenizer = get_chat_template(
+            self.current_tokenizer, chat_template="gemma-3"
+        )
+        self.current_tokenizer.pad_token = self.current_tokenizer.eos_token
 
         chat_messages = [
-            tokenizer.apply_chat_template(
+            self.current_tokenizer.apply_chat_template(
                 prompt,
                 tokenize=False,
                 add_generation_prompt=True,
             )
             for prompt in messages
         ]
-        batch_inputs = tokenizer(chat_messages, return_tensors="pt", padding=True).to(
-            "cuda"
-        )
-        generated_ids = model.generate(
+        batch_inputs = self.current_tokenizer(
+            chat_messages, return_tensors="pt", padding=True
+        ).to("cuda")
+        generated_ids = self.current_model.generate(
             **batch_inputs,
             max_new_tokens=256,
             temperature=1.0,
@@ -257,7 +340,7 @@ class UnslothInferenceProvider(BaseInferenceProvider):
             top_k=64,
         )
         input_length = batch_inputs.input_ids.shape[1]
-        decoded = tokenizer.batch_decode(
+        decoded = self.current_tokenizer.batch_decode(
             generated_ids[:, input_length:], skip_special_tokens=True
         )
         return decoded
@@ -275,27 +358,31 @@ class UnslothInferenceProvider(BaseInferenceProvider):
         from unsloth.chat_templates import get_chat_template
 
         if model_type == "base":
-            model, processor = FastVisionModel.from_pretrained(
-                model_name=resolved_model_path,
-                load_in_4bit=True,
+            self.current_model, self.current_processor = (
+                FastVisionModel.from_pretrained(
+                    model_name=resolved_model_path,
+                    load_in_4bit=True,
+                )
             )
         else:
-            model, processor = FastVisionModel.from_pretrained(
-                model_name=resolved_model_path
+            self.current_model, self.current_processor = (
+                FastVisionModel.from_pretrained(model_name=resolved_model_path)
             )
-        FastVisionModel.for_inference(model)
-        processor = get_chat_template(processor, chat_template="gemma-3")
+        FastVisionModel.for_inference(self.current_model)
+        self.current_processor = get_chat_template(
+            self.current_processor, chat_template="gemma-3"
+        )
 
-        images, texts = prepare_vision_inputs(processor, messages)
+        images, texts = prepare_vision_inputs(self.current_processor, messages)
 
-        inputs = processor(
+        inputs = self.current_processor(
             text=texts,
             images=images,
             return_tensors="pt",
             padding=True,
         ).to("cuda")
 
-        generated_ids = model.generate(
+        generated_ids = self.current_model.generate(
             **inputs,
             max_new_tokens=256,
             use_cache=True,
@@ -303,7 +390,7 @@ class UnslothInferenceProvider(BaseInferenceProvider):
             top_p=0.95,
             top_k=64,
         )
-        decoded = processor.batch_decode(
+        decoded = self.current_processor.batch_decode(
             generated_ids[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )
         return decoded
@@ -318,6 +405,11 @@ class VLLMInferenceProvider(BaseInferenceProvider):
     but we chose to use vLLM directly here for more control and flexibility.
     """
 
+    def __init__(self):
+        self.current_llm = None
+        self.current_tokenizer = None
+        self.current_processor = None
+
     def run_batch_inference(
         self,
         base_model_id: str,
@@ -327,14 +419,49 @@ class VLLMInferenceProvider(BaseInferenceProvider):
         modality: str,
     ) -> List[str]:
         # This ensure that we use V1 engine even when running as background process (experimental)
-        os.environ["VLLM_USE_V1"] = "1"
-        if modality == "vision":
-            return self._run_batch_inference_vision(
+        # import os
+        # os.environ["VLLM_USE_V1"] = "1"
+        # Unsloth 2.0 dynamic quants are not supported by vllm, we need to manually revert it to bnb quant according to unsloth docs
+        # NOTE: not sure if we need to do this for adapters too since adapter's config will be different (still says unsloth)
+        if model_type == "base" and "unsloth-bnb-4bit" in base_model_id:
+            base_model_id = base_model_id.replace("unsloth-bnb-4bit", "bnb-4bit")
+        try:
+            if modality == "vision":
+                return self._run_batch_inference_vision(
+                    base_model_id, resolved_model_path, model_type, messages
+                )
+            return self._run_batch_inference_text(
                 base_model_id, resolved_model_path, model_type, messages
             )
-        return self._run_batch_inference_text(
-            base_model_id, resolved_model_path, model_type, messages
-        )
+        finally:
+            # Always cleanup after inference - critical for vLLM
+            self.cleanup_memory()
+
+    def cleanup_memory(self):
+        """Clean up vLLM engine memory resources - most critical cleanup"""
+        logger.info("Cleaning up vLLM engine memory...")
+
+        # vLLM engine cleanup is critical - it holds significant GPU memory
+        if self.current_llm is not None:
+            del self.current_llm
+            self.current_llm = None
+
+        if self.current_tokenizer is not None:
+            del self.current_tokenizer
+            self.current_tokenizer = None
+
+        if self.current_processor is not None:
+            del self.current_processor
+            self.current_processor = None
+
+        # Force garbage collection
+        gc.collect()
+
+        # Clear CUDA cache and synchronize - critical for vLLM
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info("CUDA cache cleared and synchronized")
 
     def _run_batch_inference_text(
         self,
@@ -349,11 +476,11 @@ class VLLMInferenceProvider(BaseInferenceProvider):
             from vllm.lora.request import LoRARequest
 
             # Load base model with LoRA support
-            llm = LLM(model=base_model_id, enable_lora=True)
-            tokenizer = llm.get_tokenizer()
+            self.current_llm = LLM(model=base_model_id, enable_lora=True)
+            self.current_tokenizer = self.current_llm.get_tokenizer()
 
             # Apply ChatML template to each conversation
-            prompts = tokenizer.apply_chat_template(
+            prompts = self.current_tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
             sampling_params = SamplingParams(
@@ -367,7 +494,7 @@ class VLLMInferenceProvider(BaseInferenceProvider):
             lora_request = LoRARequest("lora_adapter", 1, resolved_model_path)
 
             # Generate with LoRA
-            outputs = llm.generate(
+            outputs = self.current_llm.generate(
                 prompts, sampling_params=sampling_params, lora_request=lora_request
             )
         else:  # merged or base model
@@ -378,19 +505,21 @@ class VLLMInferenceProvider(BaseInferenceProvider):
 
             # TODO: This is yet to be tested with vllm on-spot quantization with bnb, but supported on docs
             if model_type == "base":
-                llm = LLM(model=model_path, quantization="bitsandbytes")
+                self.current_llm = LLM(model=model_path, quantization="bitsandbytes")
             else:
-                llm = LLM(model=model_path)
-            tokenizer = llm.get_tokenizer()
+                self.current_llm = LLM(model=model_path)
+            self.current_tokenizer = self.current_llm.get_tokenizer()
 
             # Apply ChatML template to each conversation
-            prompts = tokenizer.apply_chat_template(
+            prompts = self.current_tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
             sampling_params = SamplingParams(temperature=0.0, max_tokens=256)
 
             # Generate
-            outputs = llm.generate(prompts, sampling_params=sampling_params)
+            outputs = self.current_llm.generate(
+                prompts, sampling_params=sampling_params
+            )
 
         # Collect responses
         return [out.outputs[0].text for out in outputs]
@@ -409,8 +538,8 @@ class VLLMInferenceProvider(BaseInferenceProvider):
             from vllm.lora.request import LoRARequest
 
             # Load base model with LoRA support for vision
-            llm = LLM(model=base_model_id, enable_lora=True)
-            processor = AutoProcessor.from_pretrained(base_model_id)
+            self.current_llm = LLM(model=base_model_id, enable_lora=True)
+            self.current_processor = AutoProcessor.from_pretrained(base_model_id)
 
             # Create LoRA request
             lora_request = LoRARequest("lora_adapter", 1, resolved_model_path)
@@ -423,8 +552,8 @@ class VLLMInferenceProvider(BaseInferenceProvider):
             model_path = (
                 resolved_model_path if model_type == "merged" else base_model_id
             )
-            llm = LLM(model=model_path)
-            processor = AutoProcessor.from_pretrained(base_model_id)
+            self.current_llm = LLM(model=model_path)
+            self.current_processor = AutoProcessor.from_pretrained(base_model_id)
 
             sampling_params = SamplingParams(
                 temperature=0.7, top_p=0.95, max_tokens=100
@@ -435,7 +564,7 @@ class VLLMInferenceProvider(BaseInferenceProvider):
         # Build batch of ChatML prompts + image list
         for conv in messages:
             prompts.append(
-                processor.apply_chat_template(
+                self.current_processor.apply_chat_template(
                     conv, tokenize=False, add_generation_prompt=True
                 )
             )
@@ -448,13 +577,13 @@ class VLLMInferenceProvider(BaseInferenceProvider):
                             images.append(segment["image"])
 
         if model_type == "adapter":
-            outputs = llm.generate(
+            outputs = self.current_llm.generate(
                 {"prompt": prompts, "multi_modal_data": {"image": images}},
                 sampling_params=sampling_params,
                 lora_request=lora_request,
             )
         else:
-            outputs = llm.generate(
+            outputs = self.current_llm.generate(
                 {"prompt": prompts, "multi_modal_data": {"image": images}},
                 sampling_params=sampling_params,
             )

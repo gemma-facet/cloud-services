@@ -1,6 +1,5 @@
 import logging
 import time
-import torch
 import io
 import base64
 from typing import List, Dict, Any
@@ -224,10 +223,10 @@ class InferenceOrchestrator:
             logger.error(f"Batch inference failed with error: {str(e)}", exc_info=True)
             raise e
         finally:
+            # Provider cleanup is handled within each provider's run_batch_inference method
+            # Additional cleanup for storage artifacts
             if artifact:
                 strategy.cleanup(artifact)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         logger.info(
             f"Batch inference for {model_source} completed in {time.time() - start_time:.2f} seconds."
