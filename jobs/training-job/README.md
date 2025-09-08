@@ -63,7 +63,7 @@ All hyperparameters are grouped under the `hyperparameters` section of the confi
   "max_steps": -1,
   "packing": false,
   "use_fa2": false,
-  "max_seq_length": 2048,
+  "max_length": 2048,
   "lr_scheduler_type": "linear",
   "save_strategy": "epoch",
   "logging_steps": 10,
@@ -82,7 +82,7 @@ All hyperparameters are grouped under the `hyperparameters` section of the confi
 - `max_steps`: Maximum number of steps to train (default: -1 for unlimited)
 - `packing`: Whether to use sequence packing (default: false, only works with FA2)
 - `use_fa2`: Use FlashAttention-2 (default: false, only available for HuggingFace provider)
-- `max_seq_length`: Maximum sequence length for model/tokenizer
+- `max_length`: Maximum sequence length for model/tokenizer
 - `lr_scheduler_type`: Learning rate scheduler type (default: "linear")
 - `save_strategy`: When to save checkpoints (default: "epoch")
 - `logging_steps`: Logging frequency (default: 10)
@@ -94,7 +94,7 @@ All export options are grouped under the `export_config` section of the config. 
 
 ```json
 "export_config": {
-  "format": "adapter",           // "adapter" or "merged"
+  "format": "adapter",           // "adapter" or "merged" or "full"
   "destination": "gcs",          // "gcs" or "hfhub"
   "hf_repo_id": null,             // HuggingFace repo ID (if using hfhub)
   "include_gguf": false,          // Whether to also export GGUF format
@@ -104,7 +104,7 @@ All export options are grouped under the `export_config` section of the config. 
 
 **Field descriptions:**
 
-- `format`: Export format, either `adapter` (LoRA/QLoRA weights only, default) or `merged` (full model, usually f16 for vLLM)
+- `format`: Export format, either `adapter` (LoRA/QLoRA weights only, default) or `merged` (full model, usually f16 for vLLM), or `full` (full fine-tuned model, same precision as the base model fp16 or fp32)
 - `destination`: Where to export the model (`gcs` for Google Cloud Storage, `hfhub` for HuggingFace Hub)
 - `hf_repo_id`: (Optional) HuggingFace repo ID for upload
 - `include_gguf`: (Optional) Also export a GGUF file for CPU inference (default: false)
@@ -199,11 +199,9 @@ You can combine any number of graders in the list. Each grader will contribute t
 
 ## Example Training Config
 
-I will update this later...
-
-**Training Config:**
-
 > NOTE: This is completely identically shared with `TrainingConfig` from `training/schema.py`. This describes the `training_config` field, not the entire request.
+
+### Adapter Example
 
 ```json
 {
@@ -220,7 +218,7 @@ I will update this later...
     "max_steps": -1,
     "packing": false,
     "use_fa2": false,
-    "max_seq_length": 2048,
+    "max_length": 2048,
     "lr_scheduler_type": "linear",
     "save_strategy": "epoch",
     "logging_steps": 10,
@@ -229,7 +227,7 @@ I will update this later...
     "lora_dropout": 0.05
   },
   "export_config": {
-    "format": "merged",
+    "format": "adapter",
     "destination": "gcs",
     "hf_repo_id": null,
     "include_gguf": false,
@@ -241,18 +239,26 @@ I will update this later...
     "compute_eval_metrics": true,
     "batch_eval_metrics": false
   },
-  "reward_config": [
-    {
-      "name": "builtin_format",
-      "type": "built_in",
-      "function_name": "format_reward",
-      "parameters": {
-        "think_tag": "reasoning",
-        "answer_tag": "answer"
-      }
-    }
-  ],
   "wandb_config": null
+}
+```
+
+### Full Fine-tuning Example
+
+```json
+{
+  "base_model_id": "google/gemma-2b",
+  "method": "Full",
+  "trainer_type": "sft",
+  "export_config": {
+    "format": "full",
+    "destination": "gcs"
+  },
+  "hyperparameters": {
+    "learning_rate": 0.00005,
+    "batch_size": 1,
+    "gradient_accumulation_steps": 8
+  }
 }
 ```
 

@@ -175,9 +175,10 @@ class HyperparameterConfig(BaseModel):
     max_steps: Optional[int] = -1  # Default to -1 instead of None to avoid operator err
 
     # Technical and optimization settings
-    packing: bool = False  # whether to pack sequences for training, only works with FA2
+    packing: bool = False  # whether to pack sequences for training
+    padding_free: bool = False  # only works with FA2 or 3
     use_fa2: bool = False  # FA2 is only available when provider is "huggingface"
-    max_seq_length: Optional[int] = None  # used to load pretrained models
+    max_length: Optional[int] = 1024  # used for truncation for all trainers
     lr_scheduler_type: Optional[str] = "linear"
     save_strategy: Optional[str] = "epoch"
     logging_steps: Optional[int] = 10
@@ -189,7 +190,6 @@ class HyperparameterConfig(BaseModel):
 
     # GRPO DPO shared
     max_prompt_length: Optional[int] = 512  # Max prompt length
-    max_length: Optional[int] = 1024  # Max length for DPO
 
     # GRPO-specific hyperparameters (some are shard with DPO)
     num_generations: Optional[int] = 4  # Number of generations for GRPO
@@ -227,7 +227,7 @@ class WandbConfig(BaseModel):
 class ExportConfig(BaseModel):
     """Configuration for model export"""
 
-    format: Literal["adapter", "merged"] = "adapter"
+    format: Literal["adapter", "merged", "full"] = "adapter"
     destination: Literal["gcs", "hfhub"] = "gcs"
     hf_repo_id: Optional[str] = None
     # Whether to also export a GGUF version alongside the main format

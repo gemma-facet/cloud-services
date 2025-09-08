@@ -306,13 +306,13 @@ class UnslothInferenceProvider(BaseInferenceProvider):
             self.current_model, self.current_tokenizer = FastModel.from_pretrained(
                 model_name=resolved_model_path,
                 load_in_4bit=True,
-                max_seq_length=2048,
+                max_seq_length=1024,  # 1024 is text default from TRL
             )
         else:
             # no need to set load_in_4bit here, we follow the saved model config
             self.current_model, self.current_tokenizer = FastModel.from_pretrained(
                 model_name=resolved_model_path,
-                max_seq_length=2048,
+                max_seq_length=1024,
             )
         FastModel.for_inference(self.current_model)
         self.current_tokenizer = get_chat_template(

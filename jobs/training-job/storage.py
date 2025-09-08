@@ -351,6 +351,7 @@ class CloudStorageService:
             "adapter": "trained_adapters",
             "merged": "merged_models",
             "gguf": "gguf_models",
+            "full": "full_models",
         }
         return format_mapping.get(
             export_format, "adapters"

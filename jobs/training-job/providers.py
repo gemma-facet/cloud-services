@@ -69,6 +69,9 @@ def _build_shared_training_args(
             "num_train_epochs": hyperparam.epochs,
             "max_steps": hyperparam.max_steps or -1,
             "packing": hyperparam.packing,
+            "padding_free": hyperparam.padding_free,
+            # NOTE: IMPORTANT SFT should always only train the completion part
+            "assistant_only_loss": True,
         }
         args = config_classes["sft"](**trainer_args)
 
@@ -312,7 +315,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
         base_model_id = cfg.base_model_id or "google/gemma-3-1b-it"
         if base_model_id not in self.supported_models:
             raise ValueError(
-                f"Unsupported base model {cfg.base_model_id}. "
+                f"Unsupported base model {base_model_id}. "
                 f"Supported models: {self.supported_models}"
             )
 
@@ -404,6 +407,8 @@ class HuggingFaceTrainingService(BaseTrainingService):
             # NOTE: This can be easily extended to support PEFT other than LoRA
             # This returns a PeftModel
             model = self.get_peft_model(model, lora_config)
+            # Alternatively: PeftModel.from_pretrained(model, peft_id, is_trainable=True)
+            model.enable_input_require_grads()
             model.print_trainable_parameters()
             return model
 
@@ -656,7 +661,7 @@ class UnslothTrainingService(BaseTrainingService):
 
         # follows the pattern of huggingface examples
         model_kwargs = {
-            "max_seq_length": cfg.hyperparameters.max_seq_length
+            "max_seq_length": cfg.hyperparameters.max_length
             if cfg.modality == "text"
             else 2048,
             "full_finetuning": True if cfg.method == "Full" else False,
@@ -716,6 +721,8 @@ class UnslothTrainingService(BaseTrainingService):
     def _apply_peft_if_needed(self, model: Any, cfg: TrainingConfig) -> Any:
         # Method is either full or PEFT (LoRA or QLoRA)
         if cfg.method == "Full":
+            import logging
+
             logging.warning("No PEFT applied, using full model")
             return model
 
