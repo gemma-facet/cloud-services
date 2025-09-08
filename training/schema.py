@@ -191,7 +191,7 @@ class HyperparameterConfig(BaseModel):
     warmup_ratio: Optional[float] = 0.1  # Warmup ratio for GRPO
 
     # DPO-specific hyperparameters
-    beta: Optional[float] = 0.1  # DPO regularization parameter
+    beta: Optional[float] = 0.1  # DPO/ORPO regularization parameter
 
 
 class EvaluationConfig(BaseModel):
@@ -242,7 +242,7 @@ class TrainingConfig(BaseModel):
     base_model_id: str
     provider: Literal["unsloth", "huggingface"] = "huggingface"
     method: Literal["Full", "LoRA", "QLoRA"] = "QLoRA"
-    trainer_type: Literal["sft", "dpo", "grpo"] = "sft"
+    trainer_type: Literal["sft", "dpo", "grpo", "orpo"] = "sft"
     modality: Literal["text", "vision"] = "text"
 
     # Grouped configurations

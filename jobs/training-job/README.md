@@ -49,6 +49,7 @@ To create a training job, the following information must be provided or a defaul
 - **SFTTrainer**: require `language-modelling` or `prompt-completion` type dataset _<-- default_
 - **GRPOTrainer**: Used for reasoning tasks, require `prompt-only` type dataset
 - **DPOTrainer**: Used for preference tuning, require `preference` type dataset
+- **ORPOTrainer**: Alternative preference tuning method, require `preference` type dataset (same as DPO)
 
 ### Hyperparameters
 
@@ -258,6 +259,31 @@ You can combine any number of graders in the list. Each grader will contribute t
     "learning_rate": 0.00005,
     "batch_size": 1,
     "gradient_accumulation_steps": 8
+  }
+}
+```
+
+### ORPO Training Example
+
+```json
+{
+  "base_model_id": "google/gemma-2b",
+  "provider": "huggingface",
+  "method": "QLoRA",
+  "trainer_type": "orpo",
+  "modality": "text",
+  "hyperparameters": {
+    "learning_rate": 0.0001,
+    "batch_size": 2,
+    "gradient_accumulation_steps": 4,
+    "epochs": 3,
+    "beta": 0.1,
+    "max_length": 2048,
+    "max_prompt_length": 1024
+  },
+  "export_config": {
+    "format": "adapter",
+    "destination": "gcs"
   }
 }
 ```
