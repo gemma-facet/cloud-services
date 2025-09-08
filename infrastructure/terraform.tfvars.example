@@ -1,0 +1,10 @@
+# This has already been prefilled with default values
+# Feel free to change the variables to your own
+
+project_id               = "your_project_id" # TODO: fill in your project id
+region                   = "us-central1"
+data_bucket_name         = "gemma-dataset-bucket"
+export_bucket_name       = "gemma-export-bucket"
+config_bucket_name       = "gemma-train-config"
+training_image_tag       = "latest"
+preprocessing_image_tag  = "latest"
