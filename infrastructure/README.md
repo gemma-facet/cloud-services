@@ -1,21 +1,24 @@
-# Infrastructure Setup for Gemma Fine-Tuning Services
+# IaC for Gemma Fine-tuning Services
 
-This folder contains Terraform code to provision all required Google Cloud resources for the Gemma fine-tuning platform. This includes Cloud Run services, Cloud Run jobs, GCS buckets, Artifact Registry, and IAM roles.
+You can use this Terraform setup to quickly deploy the Gemma fine-tuning services infrastructure on your own Google Cloud Platform project.
 
-## Prerequisites
+1. This only works with Google Cloud Platform (GCP). Open issue / PR if you want to add support for AWS/Azure!
 
-- [Terraform](https://www.terraform.io/downloads.html) >= 1.0
-- [gcloud CLI](https://cloud.google.com/sdk/docs/install)
-- Permissions to create resources in your GCP project (Owner or Editor, or specific IAM roles)
-- (Recommended) Enable billing and required APIs in your GCP project
+2. This requires installation of [Terraform](https://www.terraform.io/downloads.html) and [gcloud CLI](https://cloud.google.com/sdk/docs/install).
+
+3. This does not create a GCP project for you. You should create one from the Console and make sure you have the correct IAM role (Owner or Editor) to create resources.
+
+4. As the writing of this, certain APIs require billing to be enabled, so it's recommended to enable billing on your project first. We might consider adding 3 and 4 to the Terraform setup in the future.
+
+> [!NOTE] We provide `Makefile` (see below) to simplify the entire deployment process. We do not recommend using `terraform` command manually because the deployment takes multiple stages (setup + build + deploy).
 
 ## Quickstart
 
 1. **Clone the repository**
 
 ```bash
-git clone <your-repo-url>
-cd gemma-fine-tuning-services/infrastructure
+git clone https://github.com/gemma-facet/cloud-services
+cd cloud-services/infrastructure
 ```
 
 2. **Authenticate with GCP**
@@ -23,8 +26,7 @@ cd gemma-fine-tuning-services/infrastructure
 ```bash
 gcloud auth login
 # Set your project
-export GOOGLE_CLOUD_PROJECT=<your-project-id>
-gcloud config set project $GOOGLE_CLOUD_PROJECT
+gcloud config set project <your-project-id>
 ```
 
 3. **Edit variables**
@@ -35,79 +37,71 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in your project d
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Values in `terraform.tfvars.example` are already prefilled with default values. Feel free to change them to your own. **You should at least fill in your project id.**
+> [!NOTE]
+> We use the project id you provided to create names for resources such as storage buckets and service account to ensure that they are globally unique. If you want to customize the names, edit the `main.tf` files in each module.
 
-| Name                    | Description                           | Default            |
-| ----------------------- | ------------------------------------- | ------------------ |
-| project_id              | GCP Project ID                        | my-gcp-project     |
-| region                  | GCP region for resources              | us-central1        |
-| data_bucket_name        | GCS bucket for datasets               | gemma-dataset-dev  |
-| export_bucket_name      | GCS bucket for model exports          | gemma-export-dev   |
-| config_bucket_name      | GCS bucket for training configs       | gemma-train-config |
-| training_image_tag      | Docker image tag for training service | latest             |
-| preprocessing_image_tag | Docker image tag for preprocessing    | latest             |
-
-4. **Initialize Terraform**
+4. **Deploy the infrastructure**
 
 ```bash
-terraform init
+make init
+make full-deploy
+make output
 ```
 
-5. **(Optional) Configure remote state**
+`make full-deploy` performs the following steps:
 
-To enable team collaboration, use a GCS bucket for remote state. Add this to `main.tf` before the `provider` block:
+1. Deploy core infrastructure (APIs, IAM, Artifact Registry, Storage, Firebase) with `make deploy-core`
+2. Build and push docker images to Artifact Registry with `make build`
+3. Deploy microservices and sets up networking (Cloud Run and API Gateway) with `make deploy-services`
 
-```hcl
-terraform {
-  backend "gcs" {
-    bucket = "<your-tf-state-bucket>"
-    prefix = "terraform/state"
-  }
-}
-```
-
-6. **Plan and apply**
+## Available Commands
 
 ```bash
-terraform plan
-terraform apply
+make help          # Show all available commands
+
+# Prerequisites
+make init
+make check
+
+# Build & Deploy
+make build          # Build all containers with Cloud Build
+make deploy         # Deploy infrastructure with Terraform
+make deploy-core    # Deploy core infrastructure only
+make deploy-services # Deploy microservices only
+make full-deploy    # Complete workflow: build + deploy
+
+# Management
+make plan           # Plan infrastructure changes
+make plan-core      # Plan core infrastructure changes
+make plan-services  # Plan microservices changes
+make output         # Show infrastructure outputs
+make destroy        # Destroy all infrastructure
 ```
 
-## What gets created?
+The infrastructure is organized into modular components:
 
-- **GCS Buckets**: For datasets, model exports, and training configs
-- **Artifact Registry**: For Docker images
-- **Cloud Run Services**: Preprocessing, Training, Inference
-- **Cloud Run Job**: Training job (GPU)
-- **IAM**: Service account and permissions
+- **Core Module**: APIs, IAM, Artifact Registry
+- **Storage Module**: GCS buckets, Firestore database
+- **Firebase Module**: Firebase App, Auth and identity management
+- **Compute Module**: Cloud Run services and jobs
+- **API Gateway Module**: Unified API access point
 
-## IAM Roles
+## Importing current setup
 
-- `roles/run.admin`: Required for Cloud Run services
-- `roles/storage.admin`: Required for managing GCS buckets
-- `roles/logging.logWriter`: Required for logging
-- `roles/datastore.user`: Required for Firestore access
+This is meant for first time deployment. If you run into any issues with resources already existing, you should figure out your own way, perhaps by importing them first so that Terraform can manage them.
 
-## Outputs
-
-- URLs for all deployed services
-- Names of all buckets and resources
-
-## Troubleshooting
-
-- Make sure your user/service account has permission to create all resources
-- If you see API errors, ensure the required APIs are enabled (Terraform will try to enable them)
-- If you get quota or billing errors, check your GCP project quotas and billing status
-- For GPU resources, ensure your project/region has available GPU quota
-- If your project already has resources created by Terraform, you can import them using `terraform import`
-
-## Cleaning Up
-
-To delete all resources created by Terraform:
+For example, you can try commands like
 
 ```bash
-terraform destroy
+terraform import module.compute.google_cloud_run_v2_service.preprocessing_service \
+  projects/<your-project-id>/locations/<your-region>/services/preprocessing-service
 ```
+
+## Known Limitations
+
+- We currently do not use terraform to setup firestore authentication because enabling Google provider requires more effort that way. You STILL need to go to the console to look up the OAuth ID, etc, and will need to use cloud secrets. Currently the config sets up everything except the Google IDP, which you need to manually enable by going to Firebase Console > Authentication > Sign-in method > Google > Enable.
+
+- You may run into an issue saying your project is not a quota project and doesn't allow you to turn on the identity management API. To fix this, go to IAM & Admin > Settings and set a billing account for the project or do `gcloud auth application-default set-quota-project <your-project-id>`.
 
 ---
 
