@@ -8,7 +8,7 @@ from schema import TrainRequest
 from huggingface_hub import login
 import logging
 
-GCS_CONFIG_BUCKET = os.getenv("GCS_CONFIG_BUCKET_NAME", "gemma-train-config")
+GCS_CONFIG_BUCKET = os.getenv("GCS_CONFIG_BUCKET_NAME", "gemma-facet-configs")
 
 
 def load_training_config(job_id):

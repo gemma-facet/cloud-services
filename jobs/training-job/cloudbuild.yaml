@@ -23,28 +23,36 @@ steps:
       ]
 
   - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "/bin/sh"
     args:
-      [
-        "beta",
-        "run",
-        "jobs",
-        "update",
-        "training-job",
-        "--image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-job:latest",
-        "--region=us-central1",
-        "--memory=32Gi",
-        "--cpu=8",
-        "--gpu=1",
-        "--task-timeout=3600",
-        "--max-retries=0",
-        "--set-env-vars=GCS_DATA_BUCKET_NAME=${_GCS_DATA_BUCKET_NAME},GCS_EXPORT_BUCKET_NAME=${_GCS_EXPORT_BUCKET_NAME},GCS_CONFIG_BUCKET_NAME=${_GCS_CONFIG_BUCKET_NAME}",
-        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
-      ]
-
-substitutions:
-  _GCS_DATA_BUCKET_NAME: "gemma-dataset-bucket"
-  _GCS_EXPORT_BUCKET_NAME: "gemma-export-bucket"
-  _GCS_CONFIG_BUCKET_NAME: "gemma-train-config"
+      - "-c"
+      - |
+        set -e
+        echo "Attempting to update Cloud Run job 'training-job'..."
+        if gcloud beta run jobs update training-job \
+             --image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-job:latest \
+             --region=us-central1 \
+             --memory=32Gi \
+             --cpu=8 \
+             --gpu=1 \
+             --task-timeout=3600 \
+             --max-retries=0 \
+             --set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs \
+             --set-env-vars=PROJECT_ID=$PROJECT_ID; then
+          echo "Updated existing job.";
+        else
+          echo "Update failed, attempting to create job...";
+          gcloud beta run jobs create training-job \
+            --image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-job:latest \
+            --region=us-central1 \
+            --memory=32Gi \
+            --cpu=8 \
+            --gpu=1 \
+            --task-timeout=3600 \
+            --max-retries=0 \
+            --set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs \
+            --set-env-vars=PROJECT_ID=$PROJECT_ID;
+        fi
 
 options:
   machineType: "E2_HIGHCPU_32"

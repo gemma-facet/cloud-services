@@ -20,3 +20,10 @@ test*
 
 .DS_Store
 data/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+terraform.tfstate*
+terraform.tfvars.backup*

@@ -1,7 +1,7 @@
 swagger: "2.0"
 info:
-  title: "gemma-fintuner-v3"
-  version: "3.0.0"
+  title: "gemma-fintuner-v5"
+  version: "5.0.0"
 host: gemma-finetuner
 schemes:
   - https
@@ -13,7 +13,7 @@ paths:
       summary: "Proxy to preprocessing service for listing datasets"
       operationId: "listDatasets"
       x-google-backend:
-        address: https://preprocessing-service-10987549752.us-central1.run.app
+        address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -28,7 +28,7 @@ paths:
       summary: "Proxy to preprocessing service"
       operationId: "getDataset"
       x-google-backend:
-        address: https://preprocessing-service-10987549752.us-central1.run.app
+        address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -48,7 +48,7 @@ paths:
             type: object
             additionalProperties: true
       x-google-backend:
-        address: https://preprocessing-service-10987549752.us-central1.run.app
+        address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -62,7 +62,7 @@ paths:
       summary: "Proxy to preprocessing service"
       operationId: "deleteDataset"
       x-google-backend:
-        address: https://preprocessing-service-10987549752.us-central1.run.app
+        address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -84,7 +84,7 @@ paths:
             type: object
             additionalProperties: true
       x-google-backend:
-        address: https://training-service-10987549752.us-central1.run.app
+        address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -100,7 +100,7 @@ paths:
       summary: "Proxy to training service for listing jobs"
       operationId: "listJobs"
       x-google-backend:
-        address: https://training-service-10987549752.us-central1.run.app
+        address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -115,7 +115,7 @@ paths:
       summary: "Proxy to training service"
       operationId: "getJob"
       x-google-backend:
-        address: https://training-service-10987549752.us-central1.run.app
+        address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -129,7 +129,7 @@ paths:
       summary: "Proxy to training service"
       operationId: "deleteJob"
       x-google-backend:
-        address: https://training-service-10987549752.us-central1.run.app
+        address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -151,7 +151,7 @@ paths:
             type: object
             additionalProperties: true
       x-google-backend:
-        address: https://inference-service-10987549752.us-central1.run.app
+        address: ${inference_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -172,7 +172,7 @@ paths:
             type: object
             additionalProperties: true
       x-google-backend:
-        address: https://inference-service-10987549752.us-central1.run.app
+        address: ${inference_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -194,7 +194,7 @@ paths:
             type: object
             additionalProperties: true
       x-google-backend:
-        address: https://inference-service-10987549752.us-central1.run.app
+        address: ${inference_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
         deadline: 60.0
       security:
@@ -211,6 +211,6 @@ securityDefinitions:
     authorizationUrl: ""
     flow: "implicit"
     type: "oauth2"
-    x-google-issuer: "https://securetoken.google.com/gemma-finetune-gsoc"
+    x-google-issuer: "https://securetoken.google.com/${project_id}"
     x-google-jwks_uri: "https://www.googleapis.com/service_accounts/v1/metadata/x509/securetoken@system.gserviceaccount.com"
-    x-google-audiences: "gemma-finetune-gsoc"
+    x-google-audiences: "${project_id}"

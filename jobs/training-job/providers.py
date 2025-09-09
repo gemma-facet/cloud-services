@@ -31,12 +31,12 @@ def _build_shared_training_args(
     - Vision-specific configuration
 
     Args:
-        trainer_type: Type of trainer (sft, grpo, dpo)
+        trainer_type: Type of trainer (sft, grpo, dpo, orpo)
         cfg: Training configuration
         job_id: Job identifier
         report_to: Reporting destination
         provider_specific_args: Provider-specific base arguments
-        config_classes: Dict with trainer config classes (SFTConfig, GRPOConfig, DPOConfig)
+        config_classes: Dict with trainer config classes (SFTConfig, GRPOConfig, DPOConfig, ORPOConfig)
 
     Returns:
         Configured training arguments object ready for trainer
@@ -69,6 +69,9 @@ def _build_shared_training_args(
             "num_train_epochs": hyperparam.epochs,
             "max_steps": hyperparam.max_steps or -1,
             "packing": hyperparam.packing,
+            "padding_free": hyperparam.padding_free,
+            # NOTE: IMPORTANT SFT should always only train the completion part
+            "assistant_only_loss": True,
         }
         args = config_classes["sft"](**trainer_args)
 
@@ -116,6 +119,20 @@ def _build_shared_training_args(
             "max_length": hyperparam.max_length,
         }
         args = config_classes["dpo"](**trainer_args)
+
+    elif trainer_type == "orpo":
+        trainer_args = {
+            **base_args,
+            "num_train_epochs": hyperparam.epochs,
+            "max_steps": hyperparam.max_steps or -1,
+            "beta": hyperparam.beta or 0.1,
+            "max_prompt_length": hyperparam.max_prompt_length
+            if cfg.modality != "vision"
+            else None,
+            # max_length is max_completion_length + max_prompt_length
+            "max_length": hyperparam.max_length,
+        }
+        args = config_classes["orpo"](**trainer_args)
 
     else:
         raise ValueError(f"Unsupported trainer type: {trainer_type}")
@@ -174,7 +191,7 @@ def _build_shared_training_args(
 
 def _reformat_vision_dataset(example):
     """
-    Convert vision datasets from complete ChatML format to the format expected by GRPO/DPO trainers.
+    Convert vision datasets from complete ChatML format to the format expected by GRPO/DPO/ORPO trainers.
     This extracts images to a separate column and applies chat template to create prompt strings.
     This can also be done by formatting dataset differently in preprocessing, but post-processing is what we've chosen.
 
@@ -187,7 +204,7 @@ def _reformat_vision_dataset(example):
     - Prompt-only format (for GRPO): {"prompt": [...], "answer": "...", "reasoning": "...", ...}
       Output: {"prompt": "templated_string", "image": PIL.Image, "answer": "...", "reasoning": "...", ...}
 
-    - Preference format (for DPO): {"prompt": [...], "chosen": [...], "rejected": [...]}
+    - Preference format (for DPO/ORPO): {"prompt": [...], "chosen": [...], "rejected": [...]}
       Output: {"prompt": "templated_string", "chosen": "templated_string", "rejected": "templated_string", "images": [PIL.Image]}
     """
     from PIL import Image
@@ -225,7 +242,7 @@ def _reformat_vision_dataset(example):
         return image_list
 
     if all(k in example for k in ("prompt", "chosen", "rejected")):
-        # in DPOTrainer._prepare_dataset the _process_row requires the "images" field
+        # in DPOTrainer/ORPOTrainer._prepare_dataset the _process_row requires the "images" field
         # It then handles all chat template and tokenization automatically for all three columns
         # see trl.maybe_apply_chat_template for details
         example["images"] = get_images_from_prompt(example.get("prompt"))
@@ -236,7 +253,7 @@ def _reformat_vision_dataset(example):
         example["image"] = images[0] if images else None
     else:
         raise ValueError(
-            "Example must contain 'prompt' field (for GRPO) or 'prompt', 'chosen', and 'rejected' fields (for DPO)"
+            "Example must contain 'prompt' field (for GRPO) or 'prompt', 'chosen', and 'rejected' fields (for DPO/ORPO)"
         )
 
     return example
@@ -260,6 +277,8 @@ class HuggingFaceTrainingService(BaseTrainingService):
             GRPOConfig,
             DPOTrainer,
             DPOConfig,
+            ORPOTrainer,
+            ORPOConfig,
         )
 
         self.AutoTokenizer = AutoTokenizer
@@ -275,6 +294,8 @@ class HuggingFaceTrainingService(BaseTrainingService):
         self.GRPOConfig = GRPOConfig
         self.DPOTrainer = DPOTrainer
         self.DPOConfig = DPOConfig
+        self.ORPOTrainer = ORPOTrainer
+        self.ORPOConfig = ORPOConfig
 
         # Support both IT and PT models
         # no official quantised so we apply them later with bnb
@@ -312,7 +333,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
         base_model_id = cfg.base_model_id or "google/gemma-3-1b-it"
         if base_model_id not in self.supported_models:
             raise ValueError(
-                f"Unsupported base model {cfg.base_model_id}. "
+                f"Unsupported base model {base_model_id}. "
                 f"Supported models: {self.supported_models}"
             )
 
@@ -379,7 +400,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
         Otherwise you should provide a data collator that is used by the trainer to do reformatting internally.
         Or you can provide a formatting_func in the trainer.
         """
-        if modality == "vision" and trainer_type in ["dpo", "grpo"]:
+        if modality == "vision" and trainer_type in ["dpo", "grpo", "orpo"]:
             # Convert vision datasets to the format expected by GRPO/DPO trainers and they will handle processing
             # NOTE: do not use batching here since it will make each column a list and break the format function
             train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
@@ -404,6 +425,8 @@ class HuggingFaceTrainingService(BaseTrainingService):
             # NOTE: This can be easily extended to support PEFT other than LoRA
             # This returns a PeftModel
             model = self.get_peft_model(model, lora_config)
+            # Alternatively: PeftModel.from_pretrained(model, peft_id, is_trainable=True)
+            model.enable_input_require_grads()
             model.print_trainable_parameters()
             return model
 
@@ -433,6 +456,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
             "sft": self.SFTConfig,
             "grpo": self.GRPOConfig,
             "dpo": self.DPOConfig,
+            "orpo": self.ORPOConfig,
         }
 
         # Get complete configured training arguments
@@ -484,13 +508,16 @@ class HuggingFaceTrainingService(BaseTrainingService):
         elif trainer_type == "dpo":
             # NOTE: DPO Trainer doesn't need collator for vision, we reformat the dataset manually
             return self.DPOTrainer(**base_trainer_args)
+        elif trainer_type == "orpo":
+            # NOTE: ORPO uses the same dataset format as DPO (preference pairs)
+            return self.ORPOTrainer(**base_trainer_args)
         else:
             raise ValueError(f"Unsupported trainer type: {trainer_type}")
 
     def _create_vision_collate_fn(self, processor):
         """
         Create vision collate function for HuggingFace SFT vision training.
-        This ONLY works with SFTTrainer dataset type because GRPO and DPO do not use data collator.
+        This ONLY works with SFTTrainer dataset type because GRPO, DPO, and ORPO do not use data collator.
         They require a pre-formatted dataset and handles vision processing internally.
         NOTE: There is no built in hugging face vision collator unlike Unsloth
         """
@@ -595,6 +622,8 @@ class UnslothTrainingService(BaseTrainingService):
             GRPOTrainer,
             DPOConfig,
             DPOTrainer,
+            ORPOConfig,
+            ORPOTrainer,
         )
 
         self.FastLanguageModel = FastLanguageModel
@@ -611,6 +640,8 @@ class UnslothTrainingService(BaseTrainingService):
         self.GRPOTrainer = GRPOTrainer
         self.DPOConfig = DPOConfig
         self.DPOTrainer = DPOTrainer
+        self.ORPOConfig = ORPOConfig
+        self.ORPOTrainer = ORPOTrainer
 
         # Haven't tested 270M will add that later
         self.supported_models = [
@@ -656,7 +687,7 @@ class UnslothTrainingService(BaseTrainingService):
 
         # follows the pattern of huggingface examples
         model_kwargs = {
-            "max_seq_length": cfg.hyperparameters.max_seq_length
+            "max_seq_length": cfg.hyperparameters.max_length
             if cfg.modality == "text"
             else 2048,
             "full_finetuning": True if cfg.method == "Full" else False,
@@ -695,7 +726,7 @@ class UnslothTrainingService(BaseTrainingService):
         trainer_type: str,
     ) -> Tuple[Dataset, Dataset]:
         # Unsloth standardization for text; vision uses raw datasets
-        # We only need to do this for SFT since GRPO/DPO use custom format functions
+        # We only need to do this for SFT since GRPO/DPO/ORPO use custom format functions
         if modality == "text" and trainer_type == "sft":
             train_ds = self._prepare_unsloth_text_dataset(
                 train_ds, tokenizer_or_processor
@@ -705,8 +736,8 @@ class UnslothTrainingService(BaseTrainingService):
                 if eval_ds is not None
                 else None
             )
-        # Convert vision datasets to the format expected by GRPO/DPO trainers
-        elif modality == "vision" and trainer_type in ["dpo", "grpo"]:
+        # Convert vision datasets to the format expected by GRPO/DPO/ORPO trainers
+        elif modality == "vision" and trainer_type in ["dpo", "grpo", "orpo"]:
             train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
             if eval_ds is not None:
                 eval_ds = eval_ds.map(lambda example: _reformat_vision_dataset(example))
@@ -716,6 +747,8 @@ class UnslothTrainingService(BaseTrainingService):
     def _apply_peft_if_needed(self, model: Any, cfg: TrainingConfig) -> Any:
         # Method is either full or PEFT (LoRA or QLoRA)
         if cfg.method == "Full":
+            import logging
+
             logging.warning("No PEFT applied, using full model")
             return model
 
@@ -776,6 +809,7 @@ class UnslothTrainingService(BaseTrainingService):
             "sft": self.SFTConfig,
             "grpo": self.GRPOConfig,
             "dpo": self.DPOConfig,
+            "orpo": self.ORPOConfig,
         }
 
         # Get complete configured training arguments
@@ -841,6 +875,9 @@ class UnslothTrainingService(BaseTrainingService):
         elif trainer_type == "dpo":
             self.PatchDPOTrainer()
             return self.DPOTrainer(**base_trainer_args)
+        elif trainer_type == "orpo":
+            # ORPO uses the same dataset format as DPO (preference pairs)
+            return self.ORPOTrainer(**base_trainer_args)
         else:
             raise ValueError(f"Unsupported trainer type: {trainer_type}")
 

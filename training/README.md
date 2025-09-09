@@ -43,7 +43,7 @@ Start a new training job.
       "max_steps": -1,
       "packing": false,
       "use_fa2": false,
-      "max_seq_length": 2048,
+      "max_length": 2048,
       "lr_scheduler_type": "linear",
       "save_strategy": "epoch",
       "logging_steps": 10,

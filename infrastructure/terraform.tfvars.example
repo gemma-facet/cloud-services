@@ -1,0 +1,13 @@
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values
+# =============================================================================
+
+project_id = "your-gcp-project-id-here"
+
+region = "us-central1"
+
+# OPTIONAL: Labels for all resources (for cost tracking and organization)
+labels = {
+  project     = "gemma-fine-tuning"
+  managed-by  = "terraform"
+}

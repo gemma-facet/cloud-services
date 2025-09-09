@@ -47,7 +47,7 @@ def _prepare_model_for_export(
     )
 
     # For unsloth this also works: model.save_pretrained_merged("model", tokenizer, save_method = "lora",)
-    if export_config.format == "adapter":
+    if export_config.format == "adapter" or export_config.format == "full":
         if hasattr(model, "save_pretrained"):
             model.save_pretrained(temp_dir)
         else:
