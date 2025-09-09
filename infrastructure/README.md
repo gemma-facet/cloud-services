@@ -54,6 +54,28 @@ make output
 2. Build and push docker images to Artifact Registry with `make build`
 3. Deploy microservices and sets up networking (Cloud Run and API Gateway) with `make deploy-services`
 
+4. **Use the results**
+
+From the outputs, get the URLs from the API Gateway and Inference service and set them in the frontend `.env` file when you deploy the next.js app:
+
+```bash
+INFERENCE_SERVICE_URL=url-from-terraform-output
+API_GATEWAY_URL=url-from-terraform-output
+```
+
+In addition, you need to obtain the firebase config from the Firebase Console and set them in the frontend `.env` file:
+
+```bash
+NEXT_PUBLIC_FIREBASE_API_KEY=your-firebase-api-key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-firebase-auth-domain
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-firebase-project-id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-firebase-storage-bucket
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-firebase-messaging-sender-id
+NEXT_PUBLIC_FIREBASE_APP_ID=your-firebase-app-id
+```
+
+We hope to automate the second step as well but cannot yet find a way to avoid needing the console.
+
 ## Available Commands
 
 ```bash

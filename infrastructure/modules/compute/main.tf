@@ -346,20 +346,24 @@ resource "google_cloud_run_v2_job" "training_job" {
   }
 }
 
-# IAM bindings for public access (adjust as needed for production)
+# IAM bindings for public access
 resource "google_cloud_run_service_iam_binding" "preprocessing_service_public" {
   location = google_cloud_run_v2_service.preprocessing_service.location
   service  = google_cloud_run_v2_service.preprocessing_service.name
   role     = "roles/run.invoker"
-  members  = ["allUsers"]  # Consider restricting this in production
+  members  = ["serviceAccount:${var.service_account_email}"]
 }
 
 resource "google_cloud_run_service_iam_binding" "training_service_public" {
   location = google_cloud_run_v2_service.training_service.location
   service  = google_cloud_run_v2_service.training_service.name
   role     = "roles/run.invoker"
-  members  = ["allUsers"]  # Consider restricting this in production
+  members  = ["serviceAccount:${var.service_account_email}"]
 }
+
+# NOTE: WE DID NOT MAKE A MISTAKE TO HAVE ALLUSERS HERE!!
+# To avoid gateway timeout the frontend is no longer using inference through gateway.
+# The service itself still does authentication so it's not a problem
 
 resource "google_cloud_run_service_iam_binding" "inference_service_public" {
   location = google_cloud_run_v2_service.inference_service.location

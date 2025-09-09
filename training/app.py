@@ -41,8 +41,8 @@ job_manager = JobStateManager(project_id)
 # These will not be configured in the os envvars because they are pretty much fixed to these two values
 REGION = os.getenv("REGION", "us-central1")
 JOB_NAME = os.getenv("TRAINING_JOB_NAME", "training-job")
-GCS_CONFIG_BUCKET = os.getenv("GCS_CONFIG_BUCKET_NAME", "gemma-train-config")
-GCS_EXPORT_BUCKET = os.getenv("GCS_EXPORT_BUCKET_NAME", "gemma-export-bucket")
+GCS_CONFIG_BUCKET = os.getenv("GCS_CONFIG_BUCKET_NAME", "gemma-facet-configs")
+GCS_EXPORT_BUCKET = os.getenv("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
 
 
 @app.get("/health")

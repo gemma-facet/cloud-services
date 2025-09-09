@@ -689,8 +689,8 @@ class StorageStrategyFactory:
 
 
 # default model storage service instance
-data_bucket = os.environ.get("GCS_DATA_BUCKET_NAME", "gemma-dataset-bucket")
-export_bucket = os.environ.get("GCS_EXPORT_BUCKET_NAME", "gemma-export-bucket")
+data_bucket = os.environ.get("GCS_DATA_BUCKET_NAME", "gemma-facet-datasets")
+export_bucket = os.environ.get("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
 project_id = os.environ.get("PROJECT_ID")
 
 # Initialize dataset tracker if project_id is available
