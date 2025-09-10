@@ -268,17 +268,30 @@ class ExportUtils:
         if not self.job_doc.adapter_path:
             raise ValueError("Adapter path not found in the database.")
 
-        adapter_path = self.job_doc.adapter_path
-        local_adapter_path = gcs_storage._download_directory(adapter_path)
+        local_adapter_path = None
+        try:
+            adapter_path = self.job_doc.adapter_path
+            local_adapter_path = gcs_storage._download_directory(adapter_path)
 
-        files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
-        gcs_zip_path = gcs_storage._zip_upload_file(
-            local_adapter_path, files_destination, "adapter"
-        )
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+            gcs_zip_path = gcs_storage._zip_upload_file(
+                local_adapter_path, files_destination, "adapter"
+            )
 
-        self._update_export_artifacts("adapter", "file", gcs_zip_path)
-        self._update_job_artifacts("adapter", "file", gcs_zip_path)
-        self._update_status("completed", "Adapter exported successfully.")
+            self._update_export_artifacts("adapter", "file", gcs_zip_path)
+            self._update_job_artifacts("adapter", "file", gcs_zip_path)
+            self._update_status("completed", "Adapter exported successfully.")
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to export adapter for job {self.job_id}: {str(e)}"
+            )
+            self._update_status("failed", f"Adapter export failed: {str(e)}")
+            raise Exception(f"Adapter export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_adapter_path:
+                gcs_storage._cleanup_local_directory(local_adapter_path)
 
         return
 
