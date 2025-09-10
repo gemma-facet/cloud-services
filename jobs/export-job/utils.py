@@ -149,6 +149,61 @@ class ExportUtils:
             self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
             raise Exception(f"Model merging failed: {str(e)}")
 
+    def _run_llama_cpp_conversion(self, local_merged_path: str, job_id: str) -> str:
+        """
+        Run llama.cpp conversion to convert model to GGUF format.
+
+        Args:
+            local_merged_path: Local path to the merged model
+            job_id: Job ID for naming the output file
+
+        Returns:
+            str: Path to the generated GGUF file
+        """
+        try:
+            import subprocess
+            import os
+
+            # Create output file path
+            output_file = f"/tmp/model_{job_id}.gguf"
+
+            # Run llama.cpp convert command
+            cmd = [
+                "./llama.cpp/convert.py",
+                local_merged_path,
+                "--outfile",
+                output_file,
+                "--outtype",
+                "q8_0",  # Default quantization
+            ]
+
+            self.logger.info(f"Running llama.cpp conversion: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=".",  # Run from current directory
+                timeout=3600,  # 1 hour timeout
+            )
+
+            if result.returncode != 0:
+                self.logger.error(f"llama.cpp conversion failed: {result.stderr}")
+                raise Exception(f"llama.cpp conversion failed: {result.stderr}")
+
+            if not os.path.exists(output_file):
+                raise Exception("GGUF file was not created")
+
+            self.logger.info(f"Successfully converted to GGUF: {output_file}")
+            return output_file
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("llama.cpp conversion timed out")
+            raise Exception("llama.cpp conversion timed out")
+        except Exception as e:
+            self.logger.error(f"Failed to run llama.cpp conversion: {str(e)}")
+            raise Exception(f"llama.cpp conversion failed: {str(e)}")
+
     def _update_status(self, status: export_status, message: Optional[str] = None):
         """
         Update the export job status in Firestore.
@@ -323,4 +378,105 @@ class ExportUtils:
         return
 
     def export_gguf(self):
-        pass
+        """
+        Export the GGUF model from the training job.
+
+        Downloads the merged model from GCS (or creates it from adapter if not available),
+        converts it to GGUF format using llama.cpp, uploads it to the export bucket,
+        and updates both the export job and training job with the artifact information.
+
+        Raises:
+            ValueError: If neither merged_path nor adapter_path/base_model_id are available
+        """
+        self.logger.info(f"Exporting GGUF model for job {self.job_id}")
+        self._update_status("running", "Preparing GGUF export")
+
+        # Check if GGUF model already exported
+        if self.job_doc.artifacts.file.gguf:
+            self.logger.info(f"GGUF model already exported for job {self.job_id}")
+            self._update_status(
+                "completed", "GGUF model already present in the database."
+            )
+            return
+
+        local_merged_path = None
+        try:
+            # Check if merged model already exists in raw artifacts
+            if self.job_doc.artifacts.raw.merged:
+                # Download existing merged model
+                self.logger.info(
+                    f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
+                )
+                local_merged_path = gcs_storage._download_directory(
+                    self.job_doc.artifacts.raw.merged
+                )
+            else:
+                # Create merged model from adapter first
+                if not self.job_doc.adapter_path or not self.job_doc.base_model_id:
+                    raise ValueError(
+                        "adapter_path and base_model_id required to create merged model"
+                    )
+
+                self.logger.info(
+                    "Creating merged model from adapter for GGUF conversion"
+                )
+                # Download adapter first
+                local_adapter_path = gcs_storage._download_directory(
+                    self.job_doc.adapter_path
+                )
+
+                self._update_status("running", "Merging model with adapter")
+                # Merge model locally
+                local_merged_path = self._merge_model(
+                    local_adapter_path,
+                    self.job_doc.base_model_id,
+                    self.job_id,
+                    self.hf_token,
+                    cleanup_temp=False,
+                )
+
+                # Clean up downloaded adapter
+                gcs_storage._cleanup_local_directory(local_adapter_path)
+
+                # Upload merged model to export bucket for raw artifacts
+                export_destination = (
+                    f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
+                )
+                merged_gcs_path = gcs_storage._upload_directory(
+                    local_merged_path, export_destination
+                )
+
+                # Update raw artifacts
+                self._update_job_artifacts("merged", "raw", merged_gcs_path)
+                self._update_export_artifacts("merged", "raw", merged_gcs_path)
+                self.logger.info(f"Updated raw merged model path: {merged_gcs_path}")
+
+            # Convert to GGUF
+            self._update_status("running", "Converting model to GGUF format")
+            gguf_file_path = self._run_llama_cpp_conversion(
+                local_merged_path, self.job_id
+            )
+
+            # Upload GGUF to files bucket
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+            gcs_gguf_path = gcs_storage._upload_file(
+                gguf_file_path, files_destination, "model"
+            )
+
+            # Update artifacts
+            self._update_export_artifacts("gguf", "file", gcs_gguf_path)
+            self._update_job_artifacts("gguf", "file", gcs_gguf_path)
+            self._update_status("completed", "GGUF model exported successfully.")
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to export GGUF model for job {self.job_id}: {str(e)}"
+            )
+            self._update_status("failed", f"GGUF model export failed: {str(e)}")
+            raise Exception(f"GGUF model export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_merged_path:
+                gcs_storage._cleanup_local_directory(local_merged_path)
+
+        return
