@@ -53,6 +53,102 @@ class ExportUtils:
 
         self.logger = logging.getLogger(__name__)
 
+    def _get_backend_provider(self, base_model_id: str) -> str:
+        """
+        Determine the backend provider based on the base model ID.
+
+        Args:
+            base_model_id: The base model identifier
+
+        Returns:
+            str: Backend provider name ("unsloth" or "huggingface")
+        """
+        if base_model_id.startswith("unsloth/"):
+            return "unsloth"
+        else:
+            return "huggingface"
+
+    def _merge_model(
+        self,
+        local_adapter_path: str,
+        base_model_id: str,
+        job_id: str,
+        hf_token: Optional[str] = None,
+        cleanup_temp: bool = True,
+    ) -> str:
+        """
+        Merge the adapter with the base model locally.
+
+        Args:
+            local_adapter_path: Local path to the downloaded adapter
+            base_model_id: ID of the base model (e.g., "google/gemma-2-9b")
+            job_id: Job ID for tracking
+            hf_token: Hugging Face token for accessing gated models
+            cleanup_temp: Whether to clean up temporary files after merging
+
+        Returns:
+            str: Local path to the merged model
+
+        Raises:
+            Exception: If merging fails
+        """
+        try:
+            self.logger.info(f"Starting model merge for job {job_id}")
+            self.logger.info(f"Local adapter path: {local_adapter_path}")
+            self.logger.info(f"Base model: {base_model_id}")
+
+            backend_provider = self._get_backend_provider(base_model_id)
+            self.logger.info(f"Backend provider: {backend_provider}")
+
+            # Login to Hugging Face if token provided
+            if hf_token:
+                from huggingface_hub import login
+
+                login(token=hf_token)
+                self.logger.info("Logged into Hugging Face")
+
+            # Merge model based on provider
+            if backend_provider == "unsloth":
+                from unsloth import FastModel
+
+                logging.info("Loading adapter model from Unsloth")
+
+                model, tokenizer = FastModel.from_pretrained(
+                    model_name=local_adapter_path,
+                    max_seq_length=2048,
+                    load_in_4bit=True,
+                )
+
+                logging.info("Merging model with Unsloth")
+
+                model.save_pretrained_merged(
+                    "merged_model", tokenizer, save_method="merged_16bit"
+                )
+
+            elif backend_provider == "huggingface":
+                from transformers import AutoModelForCausalLM
+                from peft import PeftModel
+
+                base_model = AutoModelForCausalLM.from_pretrained(base_model_id)
+                model = PeftModel.from_pretrained(base_model, local_adapter_path)
+                merged_model = model.merge_and_unload()
+                merged_model.save_pretrained("merged_model", safe_serialization=True)
+
+            merged_model_path = "merged_model"
+
+            # Clean up temp files if requested
+            if cleanup_temp:
+                gcs_storage._cleanup_local_directory(merged_model_path)
+            else:
+                self.logger.info("Keeping temp files for further processing")
+
+            self.logger.info(f"Successfully merged model for job {job_id}")
+            return merged_model_path
+
+        except Exception as e:
+            self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
+            raise Exception(f"Model merging failed: {str(e)}")
+
     def _update_status(self, status: export_status, message: Optional[str] = None):
         """
         Update the export job status in Firestore.
@@ -109,7 +205,7 @@ class ExportUtils:
         self.logger.info(f"Exporting adapter for job {self.job_id}")
         self._update_status("running", "Preparing adapter export")
 
-        if self.job_doc.artifacts.files.adapter:
+        if self.job_doc.artifacts.file.adapter:
             self.logger.info(f"Adapter already exported for job {self.job_id}")
             self._update_status("completed", "Adapter already present in the database.")
             return
@@ -132,7 +228,99 @@ class ExportUtils:
         return
 
     def export_merged(self):
-        pass
+        """
+        Export the merged model from the training job.
+
+        Downloads the merged model from GCS (or creates it from adapter if not available),
+        creates a zip file, uploads it to the export bucket, and updates both the export job
+        and training job with the artifact information.
+
+        Raises:
+            ValueError: If neither merged_path nor adapter_path/base_model_id are available
+        """
+        self.logger.info(f"Exporting merged model for job {self.job_id}")
+        self._update_status("running", "Preparing merged model export")
+
+        # Check if merged model already exported
+        if self.job_doc.artifacts.file.merged:
+            self.logger.info(f"Merged model already exported for job {self.job_id}")
+            self._update_status(
+                "completed", "Merged model already present in the database."
+            )
+            return
+
+        local_merged_path = None
+        try:
+            # Check if merged model already exists in raw artifacts
+            if self.job_doc.artifacts.raw.merged:
+                # Download existing merged model
+                self.logger.info(
+                    f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
+                )
+                local_merged_path = gcs_storage._download_directory(
+                    self.job_doc.artifacts.raw.merged
+                )
+            else:
+                # Create merged model from adapter
+                if not self.job_doc.adapter_path or not self.job_doc.base_model_id:
+                    raise ValueError(
+                        "adapter_path and base_model_id required to create merged model"
+                    )
+
+                self.logger.info("Creating merged model from adapter")
+                # Download adapter first
+                local_adapter_path = gcs_storage._download_directory(
+                    self.job_doc.adapter_path
+                )
+
+                self._update_status("running", "Merging model with adapter")
+                # Merge model locally using the old ModelExportUtils logic
+                local_merged_path = self._merge_model(
+                    local_adapter_path,
+                    self.job_doc.base_model_id,
+                    self.job_id,
+                    self.hf_token,
+                    cleanup_temp=False,
+                )
+
+                # Clean up downloaded adapter
+                gcs_storage._cleanup_local_directory(local_adapter_path)
+
+                # Upload merged model to export bucket for raw artifacts
+                export_destination = (
+                    f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
+                )
+                merged_gcs_path = gcs_storage._upload_directory(
+                    local_merged_path, export_destination
+                )
+
+                self._update_job_artifacts("merged", "raw", merged_gcs_path)
+                self._update_export_artifacts("merged", "raw", merged_gcs_path)
+                self.logger.info(f"Updated raw merged model path: {merged_gcs_path}")
+
+            # Zip and upload to files bucket
+            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+            gcs_zip_path = gcs_storage._zip_upload_file(
+                local_merged_path, files_destination, "merged"
+            )
+
+            # Update artifacts
+            self._update_export_artifacts("merged", "file", gcs_zip_path)
+            self._update_job_artifacts("merged", "file", gcs_zip_path)
+            self._update_status("completed", "Merged model exported successfully.")
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to export merged model for job {self.job_id}: {str(e)}"
+            )
+            self._update_status("failed", f"Merged model export failed: {str(e)}")
+            raise Exception(f"Merged model export failed: {str(e)}")
+        finally:
+            # Clean up local files
+            if local_merged_path:
+                gcs_storage._cleanup_local_directory(local_merged_path)
+
+        return
 
     def export_gguf(self):
         pass
