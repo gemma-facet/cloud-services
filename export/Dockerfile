@@ -10,15 +10,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     wget \
     ca-certificates \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for C compiler
 ENV CC=gcc
 ENV CXX=g++
-
-# FOR llama.cpp
-RUN git clone https://github.com/ggml-org/llama.cpp
 
 # Install UV for faster package installation
 RUN pip install --no-cache-dir uv
@@ -27,10 +23,6 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 RUN uv venv && uv sync --frozen --no-cache && uv pip list
-
-# RUN uv pip install --upgrade unsloth unsloth_zoo
-
-# RUN uv pip install "xformers<0.0.27" --no-build-isolation --no-deps
 
 # Copy application code
 COPY . .
