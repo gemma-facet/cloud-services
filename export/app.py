@@ -8,7 +8,7 @@ from google.cloud import firestore
 from google.cloud import run_v2
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from schema import ExportRequest, ExportAck, JobSchema
+from schema import ExportRequest, ExportAck, ExportSchema, JobSchema, GetExportResponse
 
 app = FastAPI(
     title="Gemma Export Service",
@@ -223,6 +223,52 @@ async def export(
         raise HTTPException(
             status_code=500, detail=f"Failed to start export job: {str(e)}"
         )
+
+
+@app.get(
+    "/exports/{job_id}", response_model=GetExportResponse, name="Get Export Details"
+)
+async def get_export(job_id: str, current_user_id: str = Depends(get_current_user_id)):
+    try:
+        doc = db.collection("training_jobs").document(job_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_data = doc.to_dict()
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job data not found")
+
+        job_data = JobSchema(**job_data)
+
+        if job_data.user_id != current_user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Job does not belong to current user",
+            )
+
+        # Query for the latest export for this job_id, if any
+        export_query = (
+            db.collection("exports")
+            .where(filter=firestore.FieldFilter("job_id", "==", job_id))
+            .order_by("finished_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
+        )
+        export_docs = list(export_query.stream())
+        export_data = None
+        if export_docs:
+            export_data = export_docs[0].to_dict()
+            export_data = ExportSchema(**export_data)
+        else:
+            export_data = None
+
+        return GetExportResponse(
+            **job_data.model_dump(),
+            latest_export=export_data,
+        )
+
+    except Exception as e:
+        logging.error(f"Failed to get export {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get export: {str(e)}")
 
 
 if __name__ == "__main__":
