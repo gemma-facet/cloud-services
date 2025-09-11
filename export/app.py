@@ -9,6 +9,9 @@ from google.cloud import run_v2
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from schema import ExportRequest, ExportAck, ExportSchema, JobSchema, GetExportResponse
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
 
 app = FastAPI(
     title="Gemma Export Service",
@@ -29,14 +32,17 @@ except Exception as e:
     raise
 
 # Initialize Firestore client
-project_id = os.getenv("PROJECT_ID")
-if not project_id:
+PROJECT_ID = os.getenv("PROJECT_ID")
+logging.info(f"PROJECT_ID: {PROJECT_ID}")
+if not PROJECT_ID:
     raise ValueError("PROJECT_ID environment variable must be set for Firestore client")
-db = firestore.Client(project=project_id)
+
+REGION = os.getenv("REGION", "us-central1")
+EXPORT_JOB_NAME = os.getenv("EXPORT_JOB_NAME", "export-job")
+
+db = firestore.Client(project=PROJECT_ID)
 
 # Cloud Run Job configuration
-REGION = os.getenv("REGION", "us-central1")
-EXPORT_JOB_NAME = "export-job"
 
 logging.info("✅ Export service ready")
 
@@ -189,7 +195,7 @@ async def export(
 
         # Trigger Cloud Run Job
         client = run_v2.JobsClient()
-        job_name = f"projects/{project_id}/locations/{REGION}/jobs/{EXPORT_JOB_NAME}"
+        job_name = f"projects/{PROJECT_ID}/locations/{REGION}/jobs/{EXPORT_JOB_NAME}"
         run_request = run_v2.RunJobRequest(
             name=job_name,
             overrides=run_v2.RunJobRequest.Overrides(
@@ -197,7 +203,7 @@ async def export(
                     run_v2.RunJobRequest.Overrides.ContainerOverride(
                         env=[
                             run_v2.EnvVar(name="EXPORT_ID", value=export_id),
-                            run_v2.EnvVar(name="PROJECT_ID", value=project_id),
+                            run_v2.EnvVar(name="PROJECT_ID", value=PROJECT_ID),
                         ]
                         + (
                             [run_v2.EnvVar(name="HF_TOKEN", value=request.hf_token)]
