@@ -41,6 +41,14 @@ def main():
             logging.error(f"Error: Export type not found for export {export_id}")
             raise ValueError(f"Export type not found for export {export_id}")
 
+        if "hf_hub" in export_data.destination and not hf_token:
+            logging.error(f"Error: HF token not found for export {export_id}")
+            raise ValueError(f"HF token not found for export {export_id}")
+
+        if "hf_hub" in export_data.destination and not export_data.hf_repo_id:
+            logging.error(f"Error: HF repo ID not found for export {export_id}")
+            raise ValueError(f"HF repo ID not found for export {export_id}")
+
         export_utils = ExportUtils(db, export_id, project_id, hf_token)
 
         if export_type == "adapter":
