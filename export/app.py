@@ -256,7 +256,7 @@ async def get_export(job_id: str, current_user_id: str = Depends(get_current_use
         export_query = (
             db.collection("exports")
             .where(filter=firestore.FieldFilter("job_id", "==", job_id))
-            .order_by("finished_at", direction=firestore.Query.DESCENDING)
+            .order_by("started_at", direction=firestore.Query.DESCENDING)
             .limit(1)
         )
         export_docs = list(export_query.stream())
