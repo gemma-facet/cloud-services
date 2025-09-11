@@ -272,39 +272,75 @@ class ExportUtils:
 
         Args:
             local_adapter_path: Local path to the adapter
+
+        Raises:
+            Exception: If pushing to HF Hub fails
         """
-        backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
+        try:
+            self.logger.info(
+                f"Starting adapter push to HF Hub: {self.export_doc.hf_repo_id}"
+            )
+            self.logger.info(f"Local adapter path: {local_adapter_path}")
 
-        if backend_provider == "unsloth":
-            from unsloth import FastModel
+            backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
+            self.logger.info(f"Backend provider: {backend_provider}")
 
-            model, tokenizer = FastModel.from_pretrained(
-                model_name=local_adapter_path,
-                max_seq_length=2048,
-                load_in_4bit=True,
+            if backend_provider == "unsloth":
+                self.logger.info("Loading adapter model from Unsloth for HF Hub push")
+                from unsloth import FastModel
+
+                model, tokenizer = FastModel.from_pretrained(
+                    model_name=local_adapter_path,
+                    max_seq_length=2048,
+                    load_in_4bit=True,
+                )
+
+                self.logger.info("Pushing Unsloth model to HF Hub")
+                model.push_to_hub(
+                    self.export_doc.hf_repo_id,
+                    safe_serialization=True,
+                    token=self.hf_token,
+                )
+                self.logger.info("Pushing Unsloth tokenizer to HF Hub")
+                tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
+
+            elif backend_provider == "huggingface":
+                self.logger.info(
+                    "Loading adapter model from Hugging Face for HF Hub push"
+                )
+                from peft import PeftModel
+                from transformers import AutoTokenizer
+
+                self.logger.info(f"Loading base model: {self.job_doc.base_model_id}")
+                model = PeftModel.from_pretrained(
+                    self.job_doc.base_model_id, local_adapter_path
+                )
+                self.logger.info("Loading tokenizer for base model")
+                tokenizer = AutoTokenizer.from_pretrained(self.job_doc.base_model_id)
+
+                self.logger.info("Pushing Hugging Face model to HF Hub")
+                model.push_to_hub(
+                    self.export_doc.hf_repo_id,
+                    safe_serialization=True,
+                    token=self.hf_token,
+                )
+                self.logger.info("Pushing Hugging Face tokenizer to HF Hub")
+                tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
+
+            self.logger.info("Updating export artifacts with HF Hub path")
+            self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+            self.logger.info("Updating job artifacts with HF Hub path")
+            self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+
+            self.logger.info(
+                f"Successfully pushed adapter to HF Hub: {self.export_doc.hf_repo_id}"
             )
 
-            model.push_to_hub(
-                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
-            )
-            tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
-
-        elif backend_provider == "huggingface":
-            from peft import PeftModel
-            from transformers import AutoTokenizer
-
-            model = PeftModel.from_pretrained(
-                self.job_doc.base_model_id, local_adapter_path
-            )
-            tokenizer = AutoTokenizer.from_pretrained(self.job_doc.base_model_id)
-
-            model.push_to_hub(
-                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
-            )
-            tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
-
-        self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
-        self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+        except Exception as e:
+            self.logger.error(f"Failed to push adapter to HF Hub: {str(e)}")
+            self.logger.error(f"Adapter path: {local_adapter_path}")
+            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            raise Exception(f"Failed to push adapter to HF Hub: {str(e)}")
 
     def _push_merged_to_hf_hub(
         self, model: Union["FastModel", "PreTrainedModel"], tokenizer: Union[Any, None]
@@ -315,25 +351,56 @@ class ExportUtils:
         Args:
             model: The merged model
             tokenizer: The tokenizer
+
+        Raises:
+            Exception: If pushing to HF Hub fails
         """
-        backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
-        self.logger.info(
-            f"Pushing merged model to HF Hub: {self.export_doc.hf_repo_id}"
-        )
-        self.logger.info(f"Backend provider: {backend_provider}")
+        try:
+            self.logger.info(
+                f"Starting merged model push to HF Hub: {self.export_doc.hf_repo_id}"
+            )
+            self.logger.info(f"Model type: {type(model)}")
+            self.logger.info(f"Tokenizer type: {type(tokenizer)}")
 
-        if backend_provider == "unsloth":
-            model.push_to_hub_merged(
-                self.export_doc.hf_repo_id, tokenizer, token=self.hf_token
+            backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
+            self.logger.info(f"Backend provider: {backend_provider}")
+
+            if backend_provider == "unsloth":
+                self.logger.info("Pushing Unsloth merged model to HF Hub")
+                if tokenizer is None:
+                    self.logger.warning("Tokenizer is None for Unsloth model push")
+                model.push_to_hub_merged(
+                    self.export_doc.hf_repo_id, tokenizer, token=self.hf_token
+                )
+                self.logger.info("Successfully pushed Unsloth merged model to HF Hub")
+
+            elif backend_provider == "huggingface":
+                self.logger.info("Pushing Hugging Face merged model to HF Hub")
+                model.push_to_hub(
+                    self.export_doc.hf_repo_id,
+                    safe_serialization=True,
+                    token=self.hf_token,
+                )
+                self.logger.info(
+                    "Successfully pushed Hugging Face merged model to HF Hub"
+                )
+
+            self.logger.info("Updating export artifacts with HF Hub path")
+            self._update_export_artifacts("merged", "hf", self.export_doc.hf_repo_id)
+            self.logger.info("Updating job artifacts with HF Hub path")
+            self._update_job_artifacts("merged", "hf", self.export_doc.hf_repo_id)
+
+            self.logger.info(
+                f"Successfully pushed merged model to HF Hub: {self.export_doc.hf_repo_id}"
             )
 
-        elif backend_provider == "huggingface":
-            model.push_to_hub(
-                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
-            )
-
-        self._update_export_artifacts("merged", "hf", self.export_doc.hf_repo_id)
-        self._update_job_artifacts("merged", "hf", self.export_doc.hf_repo_id)
+        except Exception as e:
+            self.logger.error(f"Failed to push merged model to HF Hub: {str(e)}")
+            self.logger.error(f"Model type: {type(model)}")
+            self.logger.error(f"Tokenizer type: {type(tokenizer)}")
+            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            self.logger.error(f"Backend provider: {backend_provider}")
+            raise Exception(f"Failed to push merged model to HF Hub: {str(e)}")
 
     def _push_gguf_to_hf_hub(self, gguf_file_path: str):
         """
@@ -341,24 +408,68 @@ class ExportUtils:
 
         Args:
             gguf_file_path: Path to the GGUF file
+
+        Raises:
+            Exception: If pushing to HF Hub fails
         """
-        from huggingface_hub import HfApi, login
+        try:
+            self.logger.info(
+                f"Starting GGUF file push to HF Hub: {self.export_doc.hf_repo_id}"
+            )
+            self.logger.info(f"GGUF file path: {gguf_file_path}")
 
-        login(token=self.hf_token)
-        self.logger.info("Logged into Hugging Face")
+            # Import required modules
+            from huggingface_hub import HfApi, login
+            import os
 
-        api = HfApi()
-        api.create_repo(repo_id=self.export_doc.hf_repo_id, exist_ok=True)
+            # Verify GGUF file exists
+            if not os.path.exists(gguf_file_path):
+                raise FileNotFoundError(f"GGUF file not found: {gguf_file_path}")
 
-        api.upload_file(
-            path_or_fileobj=gguf_file_path,
-            path_in_repo="model.gguf",
-            repo_id=self.export_doc.hf_repo_id,
-            repo_type="model",
-        )
+            file_size = os.path.getsize(gguf_file_path)
+            self.logger.info(f"GGUF file size: {file_size / (1024 * 1024):.2f} MB")
 
-        self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
-        self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+            # Login to Hugging Face
+            self.logger.info("Logging into Hugging Face")
+            login(token=self.hf_token)
+            self.logger.info("Successfully logged into Hugging Face")
+
+            # Initialize HF API
+            self.logger.info("Initializing Hugging Face API")
+            api = HfApi()
+
+            # Create repository
+            self.logger.info(f"Creating repository: {self.export_doc.hf_repo_id}")
+            api.create_repo(repo_id=self.export_doc.hf_repo_id, exist_ok=True)
+            self.logger.info("Repository created or already exists")
+
+            # Upload GGUF file
+            self.logger.info("Uploading GGUF file to HF Hub")
+            api.upload_file(
+                path_or_fileobj=gguf_file_path,
+                path_in_repo="model.gguf",
+                repo_id=self.export_doc.hf_repo_id,
+                repo_type="model",
+            )
+            self.logger.info("Successfully uploaded GGUF file to HF Hub")
+
+            # Update artifacts
+            self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+            self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+
+            self.logger.info(
+                f"Successfully pushed GGUF file to HF Hub: {self.export_doc.hf_repo_id}"
+            )
+
+        except FileNotFoundError as e:
+            self.logger.error(f"GGUF file not found: {str(e)}")
+            self.logger.error(f"Expected file path: {gguf_file_path}")
+            raise Exception(f"GGUF file not found: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Failed to push GGUF file to HF Hub: {str(e)}")
+            self.logger.error(f"GGUF file path: {gguf_file_path}")
+            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            raise Exception(f"Failed to push GGUF file to HF Hub: {str(e)}")
 
     def export_adapter(self):
         """
