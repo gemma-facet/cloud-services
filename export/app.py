@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import List
 import uuid
 import firebase_admin
 from firebase_admin import auth
@@ -7,7 +8,7 @@ from google.cloud import firestore
 from google.cloud import run_v2
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from schema import ExportRequest, ExportAck
+from schema import ExportRequest, ExportAck, JobSchema
 
 app = FastAPI(
     title="Gemma Export Service",
@@ -113,7 +114,26 @@ async def health_check():
     return {"status": "healthy", "service": "export"}
 
 
-@app.post("/export", response_model=ExportAck, name="Export Model")
+@app.get("/exports", response_model=List[JobSchema])
+async def get_exports(current_user_id: str = Depends(get_current_user_id)):
+    try:
+        docs = (
+            db.collection("training_jobs")
+            .where(filter=firestore.FieldFilter("user_id", "==", current_user_id))
+            .where(filter=firestore.FieldFilter("status", "==", "completed"))
+            .stream()
+        )
+        entries = []
+        for doc in docs:
+            data = doc.to_dict()
+            entries.append(JobSchema(**data))
+        return entries
+    except Exception as e:
+        logging.error(f"Failed to get exports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get exports")
+
+
+@app.post("/exports", response_model=ExportAck, name="Export Model")
 async def export(
     request: ExportRequest, current_user_id: str = Depends(get_current_user_id)
 ):
