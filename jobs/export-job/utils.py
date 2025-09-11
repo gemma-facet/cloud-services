@@ -8,7 +8,7 @@ from schema import (
     export_variant,
     ExportArtifact,
 )
-from typing import Optional
+from typing import Optional, Literal
 from storage import gcs_storage
 
 
@@ -53,7 +53,9 @@ class ExportUtils:
 
         self.logger = logging.getLogger(__name__)
 
-    def _get_backend_provider(self, base_model_id: str) -> str:
+    def _get_backend_provider(
+        self, base_model_id: str
+    ) -> Literal["unsloth", "huggingface"]:
         """
         Determine the backend provider based on the base model ID.
 
@@ -61,7 +63,7 @@ class ExportUtils:
             base_model_id: The base model identifier
 
         Returns:
-            str: Backend provider name ("unsloth" or "huggingface")
+            Literal["unsloth", "huggingface"]: Backend provider name
         """
         if base_model_id.startswith("unsloth/"):
             return "unsloth"
@@ -229,7 +231,7 @@ class ExportUtils:
 
         Args:
             type: Type of artifact ("adapter", "merged", or "gguf")
-            variant: Variant of artifact ("raw" or "file")
+            variant: Variant of artifact ("raw" or "file" or "hf")
             path: GCS path where the artifact is stored
         """
         artifact = ExportArtifact(type=type, variant=variant, path=path)
@@ -245,10 +247,52 @@ class ExportUtils:
 
         Args:
             type: Type of artifact ("adapter", "merged", or "gguf")
-            variant: Variant of artifact ("raw" or "file")
+            variant: Variant of artifact ("raw" or "file" or "hf")
             path: GCS path where the artifact is stored
         """
         self.job_ref.update({f"artifacts.{variant}.{type}": path})
+
+    def _push_adapter_to_hf_hub(self, local_adapter_path: str):
+        """
+        Push the adapter to HF Hub.
+
+        Args:
+            local_adapter_path: Local path to the adapter
+        """
+        backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
+
+        if backend_provider == "unsloth":
+            from unsloth import FastModel
+
+            model, tokenizer = FastModel.from_pretrained(
+                model_name=local_adapter_path,
+                max_seq_length=2048,
+                load_in_4bit=True,
+            )
+
+            model.push_to_hub(
+                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
+            )
+            tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
+
+            self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+            self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+        elif backend_provider == "huggingface":
+            from peft import PeftModel
+            from transformers import AutoTokenizer
+
+            model = PeftModel.from_pretrained(
+                self.job_doc.base_model_id, local_adapter_path
+            )
+            tokenizer = AutoTokenizer.from_pretrained(self.job_doc.base_model_id)
+
+            model.push_to_hub(
+                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
+            )
+            tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
+
+            self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+            self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
 
     def export_adapter(self):
         """
@@ -276,14 +320,20 @@ class ExportUtils:
             adapter_path = self.job_doc.adapter_path
             local_adapter_path = gcs_storage._download_directory(adapter_path)
 
-            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
-            gcs_zip_path = gcs_storage._zip_upload_file(
-                local_adapter_path, files_destination, "adapter"
-            )
+            if "hf_hub" in self.export_doc.destination:
+                self._push_adapter_to_hf_hub(local_adapter_path)
 
-            self._update_export_artifacts("adapter", "file", gcs_zip_path)
-            self._update_job_artifacts("adapter", "file", gcs_zip_path)
-            self._update_status("completed", "Adapter exported successfully.")
+            if "gcs" in self.export_doc.destination:
+                files_destination = (
+                    f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+                )
+                gcs_zip_path = gcs_storage._zip_upload_file(
+                    local_adapter_path, files_destination, "adapter"
+                )
+
+                self._update_export_artifacts("adapter", "file", gcs_zip_path)
+                self._update_job_artifacts("adapter", "file", gcs_zip_path)
+                self._update_status("completed", "Adapter exported successfully.")
 
         except Exception as e:
             self.logger.error(
