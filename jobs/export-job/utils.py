@@ -289,8 +289,6 @@ class ExportUtils:
             )
             tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
 
-            self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
-            self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
         elif backend_provider == "huggingface":
             from peft import PeftModel
             from transformers import AutoTokenizer
@@ -305,8 +303,8 @@ class ExportUtils:
             )
             tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
 
-            self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
-            self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+        self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
+        self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
 
     def _push_merged_to_hf_hub(
         self, model: Union["FastModel", "PreTrainedModel"], tokenizer: Union[Any, None]
@@ -376,7 +374,8 @@ class ExportUtils:
 
                 self._update_export_artifacts("adapter", "file", gcs_zip_path)
                 self._update_job_artifacts("adapter", "file", gcs_zip_path)
-                self._update_status("completed", "Adapter exported successfully.")
+
+            self._update_status("completed", "Adapter exported successfully.")
 
         except Exception as e:
             self.logger.error(
