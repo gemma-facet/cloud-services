@@ -232,7 +232,9 @@ class ExportUtils:
             path: GCS path where the artifact is stored
         """
         artifact = ExportArtifact(type=type, variant=variant, path=path)
-        self.export_ref.update({"artifacts": firestore.ArrayUnion([artifact])})
+        self.export_ref.update(
+            {"artifacts": firestore.ArrayUnion([artifact.model_dump()])}
+        )
 
     def _update_job_artifacts(
         self, type: export_type, variant: export_variant, path: str
