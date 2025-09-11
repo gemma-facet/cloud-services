@@ -169,7 +169,8 @@ class ExportUtils:
 
             # Run llama.cpp convert command
             cmd = [
-                "./llama.cpp/convert.py",
+                "/app/llama_venv/bin/python",
+                "./llama.cpp/convert_hf_to_gguf.py",
                 local_merged_path,
                 "--outfile",
                 output_file,

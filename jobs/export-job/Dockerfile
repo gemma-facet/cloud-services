@@ -26,7 +26,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv venv && uv sync --frozen --no-cache && uv pip list
 
 # For llama.cpp
-RUN git clone https://github.com/ggml-org/llama.cpp
+RUN git clone https://github.com/ggml-org/llama.cpp && \
+    python -m venv /app/llama_venv && \
+    /app/llama_venv/bin/pip install -r llama.cpp/requirements.txt
 
 # Copy application code
 COPY . .
