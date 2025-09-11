@@ -335,6 +335,31 @@ class ExportUtils:
         self._update_export_artifacts("merged", "hf", self.export_doc.hf_repo_id)
         self._update_job_artifacts("merged", "hf", self.export_doc.hf_repo_id)
 
+    def _push_gguf_to_hf_hub(self, gguf_file_path: str):
+        """
+        Push the GGUF file to HF Hub.
+
+        Args:
+            gguf_file_path: Path to the GGUF file
+        """
+        from huggingface_hub import HfApi, login
+
+        login(token=self.hf_token)
+        self.logger.info("Logged into Hugging Face")
+
+        api = HfApi()
+        api.create_repo(repo_id=self.export_doc.hf_repo_id, exist_ok=True)
+
+        api.upload_file(
+            path_or_fileobj=gguf_file_path,
+            path_in_repo="model.gguf",
+            repo_id=self.export_doc.hf_repo_id,
+            repo_type="model",
+        )
+
+        self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+        self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+
     def export_adapter(self):
         """
         Export the adapter model from the training job.
@@ -572,15 +597,22 @@ class ExportUtils:
                 local_merged_path, self.job_id
             )
 
-            # Upload GGUF to files bucket
-            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
-            gcs_gguf_path = gcs_storage._upload_file(
-                gguf_file_path, files_destination, "model"
-            )
+            if "hf_hub" in self.export_doc.destination:
+                self._push_gguf_to_hf_hub(gguf_file_path)
 
-            # Update artifacts
-            self._update_export_artifacts("gguf", "file", gcs_gguf_path)
-            self._update_job_artifacts("gguf", "file", gcs_gguf_path)
+            if "gcs" in self.export_doc.destination:
+                # Upload GGUF to files bucket
+                files_destination = (
+                    f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+                )
+                gcs_gguf_path = gcs_storage._upload_file(
+                    gguf_file_path, files_destination, "model"
+                )
+
+                # Update artifacts
+                self._update_export_artifacts("gguf", "file", gcs_gguf_path)
+                self._update_job_artifacts("gguf", "file", gcs_gguf_path)
+
             self._update_status("completed", "GGUF model exported successfully.")
 
         except Exception as e:
