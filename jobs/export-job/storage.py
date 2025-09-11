@@ -16,9 +16,9 @@ class GCSStorageManager:
         self.storage_client = storage.Client()
 
         # Define bucket names
-        self.export_bucket = os.getenv("GCS_EXPORT_BUCKET_NAME", "gemma-export-bucket")
+        self.export_bucket = os.getenv("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
         self.export_files_bucket = os.getenv(
-            "GCS_EXPORT_FILES_BUCKET_NAME", "gemma-export-files"
+            "GCS_EXPORT_FILES_BUCKET_NAME", "gemma-facet-files"
         )
 
         self.logger = logging.getLogger(__name__)
