@@ -8,8 +8,13 @@ from schema import (
     export_variant,
     ExportArtifact,
 )
-from typing import Optional, Literal
+from typing import Any, Optional, Literal, Tuple, Union, TYPE_CHECKING
 from storage import gcs_storage
+
+
+if TYPE_CHECKING:
+    from unsloth import FastModel
+    from transformers import PreTrainedModel
 
 
 class ExportUtils:
@@ -70,6 +75,8 @@ class ExportUtils:
         else:
             return "huggingface"
 
+    # NOTE: The third return value is the tokenizer. However, we don't know the type of the tokenizer, so kept it as Any.
+    # We don't need the tokenizer for the hf merged model, so we can keep it as None.
     def _merge_model(
         self,
         local_adapter_path: str,
@@ -77,7 +84,7 @@ class ExportUtils:
         job_id: str,
         hf_token: Optional[str] = None,
         cleanup_temp: bool = True,
-    ) -> str:
+    ) -> Tuple[str, Union["FastModel", "PreTrainedModel"], Union[Any, None]]:
         """
         Merge the adapter with the base model locally.
 
@@ -109,6 +116,9 @@ class ExportUtils:
                 login(token=hf_token)
                 self.logger.info("Logged into Hugging Face")
 
+            return_model = None
+            return_tokenizer = None
+
             # Merge model based on provider
             if backend_provider == "unsloth":
                 from unsloth import FastModel
@@ -126,6 +136,8 @@ class ExportUtils:
                 model.save_pretrained_merged(
                     "merged_model", tokenizer, save_method="merged_16bit"
                 )
+                return_model = model
+                return_tokenizer = tokenizer
 
             elif backend_provider == "huggingface":
                 from transformers import AutoModelForCausalLM
@@ -135,6 +147,8 @@ class ExportUtils:
                 model = PeftModel.from_pretrained(base_model, local_adapter_path)
                 merged_model = model.merge_and_unload()
                 merged_model.save_pretrained("merged_model", safe_serialization=True)
+                return_model = merged_model
+                return_tokenizer = None
 
             merged_model_path = "merged_model"
 
@@ -145,7 +159,7 @@ class ExportUtils:
                 self.logger.info("Keeping temp files for further processing")
 
             self.logger.info(f"Successfully merged model for job {job_id}")
-            return merged_model_path
+            return merged_model_path, return_model, return_tokenizer
 
         except Exception as e:
             self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
@@ -294,6 +308,35 @@ class ExportUtils:
             self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
             self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
 
+    def _push_merged_to_hf_hub(
+        self, model: Union["FastModel", "PreTrainedModel"], tokenizer: Union[Any, None]
+    ):
+        """
+        Push the merged model to HF Hub.
+
+        Args:
+            model: The merged model
+            tokenizer: The tokenizer
+        """
+        backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
+        self.logger.info(
+            f"Pushing merged model to HF Hub: {self.export_doc.hf_repo_id}"
+        )
+        self.logger.info(f"Backend provider: {backend_provider}")
+
+        if backend_provider == "unsloth":
+            model.push_to_hub_merged(
+                self.export_doc.hf_repo_id, tokenizer, token=self.hf_token
+            )
+
+        elif backend_provider == "huggingface":
+            model.push_to_hub(
+                self.export_doc.hf_repo_id, safe_serialization=True, token=self.hf_token
+            )
+
+        self._update_export_artifacts("merged", "hf", self.export_doc.hf_repo_id)
+        self._update_job_artifacts("merged", "hf", self.export_doc.hf_repo_id)
+
     def export_adapter(self):
         """
         Export the adapter model from the training job.
@@ -396,7 +439,7 @@ class ExportUtils:
 
                 self._update_status("running", "Merging model with adapter")
                 # Merge model locally using the old ModelExportUtils logic
-                local_merged_path = self._merge_model(
+                local_merged_path, model, tokenizer = self._merge_model(
                     local_adapter_path,
                     self.job_doc.base_model_id,
                     self.job_id,
@@ -419,15 +462,22 @@ class ExportUtils:
                 self._update_export_artifacts("merged", "raw", merged_gcs_path)
                 self.logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
-            # Zip and upload to files bucket
-            files_destination = f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
-            gcs_zip_path = gcs_storage._zip_upload_file(
-                local_merged_path, files_destination, "merged"
-            )
+            if "hf_hub" in self.export_doc.destination:
+                self._push_merged_to_hf_hub(model, tokenizer)
 
-            # Update artifacts
-            self._update_export_artifacts("merged", "file", gcs_zip_path)
-            self._update_job_artifacts("merged", "file", gcs_zip_path)
+            if "gcs" in self.export_doc.destination:
+                # Zip and upload to files bucket
+                files_destination = (
+                    f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+                )
+                gcs_zip_path = gcs_storage._zip_upload_file(
+                    local_merged_path, files_destination, "merged"
+                )
+
+                # Update artifacts
+                self._update_export_artifacts("merged", "file", gcs_zip_path)
+                self._update_job_artifacts("merged", "file", gcs_zip_path)
+
             self._update_status("completed", "Merged model exported successfully.")
 
         except Exception as e:
@@ -493,7 +543,7 @@ class ExportUtils:
 
                 self._update_status("running", "Merging model with adapter")
                 # Merge model locally
-                local_merged_path = self._merge_model(
+                local_merged_path, _, _ = self._merge_model(
                     local_adapter_path,
                     self.job_doc.base_model_id,
                     self.job_id,
