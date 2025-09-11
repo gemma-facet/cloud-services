@@ -7,18 +7,6 @@ export_status = Literal["running", "completed", "failed"]
 export_variant = Literal["raw", "file"]
 
 
-class ExportRequest(BaseModel):
-    job_id: str
-    export_type: export_type
-    hf_token: Optional[str] = None
-
-
-class ExportAck(BaseModel):
-    success: bool
-    message: str
-    export_id: str
-
-
 class ExportArtifact(BaseModel):
     type: export_type
     path: str
@@ -61,7 +49,3 @@ class JobSchema(BaseModel):
     base_model_id: str
     modality: Optional[Literal["text", "vision"]] = "text"
     artifacts: Optional[JobArtifacts] = Field(default_factory=JobArtifacts)
-
-
-class GetExportResponse(JobSchema):
-    latest_export: Optional[ExportSchema] = None

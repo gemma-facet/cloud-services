@@ -1,23 +1,17 @@
 import logging
 import os
+from typing import List
+import uuid
 import firebase_admin
 from firebase_admin import auth
 from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud import run_v2
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.concurrency import run_in_threadpool
-from schema import (
-    ExportRequest,
-    ExportResponse,
-    ExportInfo,
-    JobsResponse,
-    JobResponse,
-    ExportPaths,
-)
-from huggingface_hub import login
-from typing import Optional
-from utils import export_utils
+from schema import ExportRequest, ExportAck, ExportSchema, JobSchema, GetExportResponse
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
 
 app = FastAPI(
     title="Gemma Export Service",
@@ -38,10 +32,17 @@ except Exception as e:
     raise
 
 # Initialize Firestore client
-project_id = os.getenv("PROJECT_ID")
-if not project_id:
+PROJECT_ID = os.getenv("PROJECT_ID")
+logging.info(f"PROJECT_ID: {PROJECT_ID}")
+if not PROJECT_ID:
     raise ValueError("PROJECT_ID environment variable must be set for Firestore client")
-db = firestore.Client(project=project_id)
+
+REGION = os.getenv("REGION", "us-central1")
+EXPORT_JOB_NAME = os.getenv("EXPORT_JOB_NAME", "export-job")
+
+db = firestore.Client(project=PROJECT_ID)
+
+# Cloud Run Job configuration
 
 logging.info("✅ Export service ready")
 
@@ -83,164 +84,62 @@ def get_current_user_id(
         )
 
 
-def login_hf(hf_token: Optional[str]):
+def create_export_document(job_id: str, export_type: str, user_id: str) -> str:
     """
-    Login to Hugging Face.
-    Login is required for pushing and pulling models since Gemma models are gated.
+    Create an export document in Firestore and return the export_id.
+
+    Args:
+        job_id: The training job ID
+        export_type: Type of export (adapter, merged, gguf)
+        user_id: User ID who requested the export
+
+    Returns:
+        str: The export document ID
     """
-    if hf_token:
-        login(token=hf_token)
-        logging.info("Logged into Hugging Face")
-    else:
-        logging.warning("HF Token not provided. Hugging Face login skipped.")
+    export_id = str(uuid.uuid4())
+
+    export_data = {
+        "export_id": export_id,
+        "job_id": job_id,
+        "type": export_type,
+        "status": "running",
+        "message": "Export job started",
+        "artifacts": [],
+        "started_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    db.collection("exports").document(export_id).set(export_data)
+    logging.info(f"Created export document {export_id} for job {job_id}")
+
+    return export_id
 
 
-@app.get("/health")
+@app.get("/health", name="Health Check")
 async def health_check():
     return {"status": "healthy", "service": "export"}
 
 
-@app.get("/jobs", response_model=JobsResponse)
-async def get_jobs(current_user_id: str = Depends(get_current_user_id)):
-    """
-    Get all completed training jobs for the current user.
-
-    Returns:
-        List of completed training jobs with their details including export information.
-    """
+@app.get("/exports", response_model=List[JobSchema])
+async def get_exports(current_user_id: str = Depends(get_current_user_id)):
     try:
-        # Query Firestore for all training jobs belonging to the current user
-        jobs_query = db.collection("training_jobs").where(
-            filter=FieldFilter("user_id", "==", current_user_id)
+        docs = (
+            db.collection("training_jobs")
+            .where(filter=firestore.FieldFilter("user_id", "==", current_user_id))
+            .where(filter=firestore.FieldFilter("status", "==", "completed"))
+            .stream()
         )
-        jobs = jobs_query.stream()
-
-        completed_jobs = []
-
-        for job in jobs:
-            job_data = job.to_dict()
-
-            # Only include jobs with status "completed"
-            if job_data.get("status") != "completed":
-                continue
-
-            # Extract required fields with proper defaults
-            export_data = job_data.get("export", {})
-            # Create ExportPaths object with proper structure
-            export_obj = ExportPaths(
-                adapter=export_data.get("adapter"),
-                merged=export_data.get("merged"),
-                gguf=export_data.get("gguf"),
-            )
-
-            # Convert Firestore timestamp to string if needed
-            created_at = job_data.get("created_at")
-            if hasattr(created_at, "isoformat"):
-                created_at = created_at.isoformat()
-            elif created_at is None:
-                created_at = ""
-
-            job_response = JobResponse(
-                base_model_id=job_data.get("base_model_id"),
-                created_at=created_at,
-                export=export_obj,
-                export_status=job_data.get("export_status"),
-                job_id=job_data.get("job_id"),
-                job_name=job_data.get("job_name"),
-                modality=job_data.get("modality"),
-            )
-
-            completed_jobs.append(job_response)
-
-        logging.info(
-            f"Retrieved {len(completed_jobs)} completed jobs for user {current_user_id}"
-        )
-        return JobsResponse(jobs=completed_jobs)
-
+        entries = []
+        for doc in docs:
+            data = doc.to_dict()
+            entries.append(JobSchema(**data))
+        return entries
     except Exception as e:
-        logging.error(f"Failed to fetch jobs for user {current_user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch jobs")
+        logging.error(f"Failed to get exports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get exports")
 
 
-@app.get("/jobs/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str, current_user_id: str = Depends(get_current_user_id)):
-    """
-    Get a specific completed training job by job_id for the current user.
-
-    Args:
-        job_id: The ID of the job to retrieve
-
-    Returns:
-        The specific training job details including export information.
-    """
-    try:
-        # Get the specific job document
-        doc = db.collection("training_jobs").document(job_id).get()
-        if not doc.exists:
-            logging.error(f"Job {job_id} not found")
-            raise HTTPException(status_code=404, detail="Job not found")
-
-        job_data = doc.to_dict()
-        if not job_data:
-            logging.error(f"Job {job_id} data is empty")
-            raise HTTPException(status_code=404, detail="Job data not found")
-
-        # Check job ownership
-        job_user_id = job_data.get("user_id")
-        if job_user_id != current_user_id:
-            logging.error(
-                f"User {current_user_id} attempted to access job {job_id} owned by {job_user_id}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied: Job does not belong to current user",
-            )
-
-        # Check job completion status
-        job_status = job_data.get("status")
-        if job_status != "completed":
-            logging.error(f"Job {job_id} is not completed (status: {job_status})")
-            raise HTTPException(
-                status_code=400, detail="Only completed jobs can be accessed"
-            )
-
-        # Extract required fields with proper defaults
-        export_data = job_data.get("export", {})
-        # Create ExportPaths object with proper structure
-        export_obj = ExportPaths(
-            adapter=export_data.get("adapter"),
-            merged=export_data.get("merged"),
-            gguf=export_data.get("gguf"),
-        )
-
-        # Convert Firestore timestamp to string if needed
-        created_at = job_data.get("created_at")
-        if hasattr(created_at, "isoformat"):
-            created_at = created_at.isoformat()
-        elif created_at is None:
-            created_at = ""
-
-        job_response = JobResponse(
-            base_model_id=job_data.get("base_model_id"),
-            created_at=created_at,
-            export=export_obj,
-            export_status=job_data.get("export_status"),
-            job_id=job_data.get("job_id"),
-            job_name=job_data.get("job_name"),
-            modality=job_data.get("modality"),
-        )
-
-        logging.info(f"Retrieved job {job_id} for user {current_user_id}")
-        return job_response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Failed to fetch job {job_id} for user {current_user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch job")
-
-
-@app.post("/export", response_model=ExportResponse)
+@app.post("/exports", response_model=ExportAck, name="Export Model")
 async def export(
     request: ExportRequest, current_user_id: str = Depends(get_current_user_id)
 ):
@@ -287,167 +186,95 @@ async def export(
         logging.error(f"Failed to verify job ownership: {e}")
         raise HTTPException(status_code=500, detail="Failed to verify job ownership")
 
-    # Update export_status to indicate export is in progress
+    # Create export document and trigger job
     try:
-        db.collection("training_jobs").document(request.job_id).update(
-            {"export_status": request.export_type}
+        # Create export document in Firestore
+        export_id = create_export_document(
+            request.job_id, request.export_type, current_user_id
         )
-        logging.info(
-            f"Updated export_status to '{request.export_type}' for job {request.job_id}"
-        )
-    except Exception as e:
-        logging.error(f"Failed to update export_status for job {request.job_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update export status")
 
-    # Handle export based on type
-    try:
-        # Get export data from Firestore
-        export_data = job_data.get("export", {})
-
-        # Check if export already exists
-        existing_export_path = export_data.get(request.export_type)
-        if existing_export_path:
-            logging.info(
-                f"{request.export_type.title()} export: returning existing path for job {request.job_id}"
-            )
-            # Clear export_status since we're returning existing export
-            try:
-                db.collection("training_jobs").document(request.job_id).update(
-                    {"export_status": None}
-                )
-                logging.info(
-                    f"Cleared export_status for job {request.job_id} (existing export)"
-                )
-            except Exception as e:
-                logging.error(
-                    f"Failed to clear export_status for job {request.job_id}: {e}"
-                )
-
-            return ExportResponse(
-                success=True,
-                job_id=request.job_id,
-                export=ExportInfo(
-                    type=request.export_type,
-                    path=existing_export_path,
-                ),
-            )
-
-        # Export doesn't exist, need to create it
-        logging.info(f"Creating {request.export_type} export for job {request.job_id}")
-
-        # Get required data from job document
-        adapter_path = job_data.get("adapter_path")
-        merged_path = job_data.get("merged_path")
-        base_model_id = job_data.get("base_model_id")
-
-        # Login to Hugging Face if token provided
-        login_hf(request.hf_token)
-
-        # Handle different export types
-        if request.export_type == "adapter":
-            if not adapter_path:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Adapter not found for this job. The training may not have completed successfully.",
-                )
-
-            export_path = await run_in_threadpool(
-                export_utils._export_adapter, request.job_id, adapter_path
-            )
-
-        elif request.export_type == "merged":
-            if not adapter_path:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Adapter not found for this job. Cannot create merged model.",
-                )
-
-            export_path = await run_in_threadpool(
-                export_utils._export_merged,
-                request.job_id,
-                merged_path,
-                adapter_path,
-                base_model_id,
-                request.hf_token,
-            )
-
-        elif request.export_type == "gguf":
-            if not adapter_path:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Adapter not found for this job. Cannot create GGUF model.",
-                )
-
-            export_path = await run_in_threadpool(
-                export_utils._export_gguf,
-                request.job_id,
-                merged_path,
-                adapter_path,
-                base_model_id,
-                request.hf_token,
-            )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported export type: {request.export_type}",
-            )
-
-        # Clear export_status on successful completion
-        try:
-            db.collection("training_jobs").document(request.job_id).update(
-                {"export_status": None}
-            )
-            logging.info(
-                f"Cleared export_status for job {request.job_id} (export completed successfully)"
-            )
-        except Exception as e:
-            logging.error(
-                f"Failed to clear export_status for job {request.job_id}: {e}"
-            )
-
-        return ExportResponse(
-            success=True,
-            job_id=request.job_id,
-            export=ExportInfo(
-                type=request.export_type,
-                path=export_path,
+        # Trigger Cloud Run Job
+        client = run_v2.JobsClient()
+        job_name = f"projects/{PROJECT_ID}/locations/{REGION}/jobs/{EXPORT_JOB_NAME}"
+        run_request = run_v2.RunJobRequest(
+            name=job_name,
+            overrides=run_v2.RunJobRequest.Overrides(
+                container_overrides=[
+                    run_v2.RunJobRequest.Overrides.ContainerOverride(
+                        env=[
+                            run_v2.EnvVar(name="EXPORT_ID", value=export_id),
+                            run_v2.EnvVar(name="PROJECT_ID", value=PROJECT_ID),
+                        ]
+                        + (
+                            [run_v2.EnvVar(name="HF_TOKEN", value=request.hf_token)]
+                            if request.hf_token
+                            else []
+                        )
+                    )
+                ]
             ),
         )
 
-    except HTTPException:
-        # Clear export_status on HTTP exceptions
-        try:
-            db.collection("training_jobs").document(request.job_id).update(
-                {"export_status": None}
-            )
-            logging.info(
-                f"Cleared export_status for job {request.job_id} (HTTP exception occurred)"
-            )
-        except Exception as clear_error:
-            logging.error(
-                f"Failed to clear export_status for job {request.job_id}: {clear_error}"
-            )
-        raise
-    except Exception as e:
-        logging.error(
-            f"Failed to export {request.export_type} for job {request.job_id}: {str(e)}"
+        _ = client.run_job(request=run_request)
+        logging.info(f"Triggered export job {export_id} for job {request.job_id}")
+
+        return ExportAck(
+            success=True,
+            message=f"Export job {export_id} started successfully",
+            export_id=export_id,
         )
-        # Clear export_status on general exceptions
-        try:
-            db.collection("training_jobs").document(request.job_id).update(
-                {"export_status": None}
-            )
-            logging.info(
-                f"Cleared export_status for job {request.job_id} (exception occurred)"
-            )
-        except Exception as clear_error:
-            logging.error(
-                f"Failed to clear export_status for job {request.job_id}: {clear_error}"
+
+    except Exception as e:
+        logging.error(f"Failed to start export job for {request.job_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start export job: {str(e)}"
+        )
+
+
+@app.get(
+    "/exports/{job_id}", response_model=GetExportResponse, name="Get Export Details"
+)
+async def get_export(job_id: str, current_user_id: str = Depends(get_current_user_id)):
+    try:
+        doc = db.collection("training_jobs").document(job_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_data = doc.to_dict()
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job data not found")
+
+        job_data = JobSchema(**job_data)
+
+        if job_data.user_id != current_user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Job does not belong to current user",
             )
 
-        raise HTTPException(
-            status_code=500, detail=f"Failed to export {request.export_type}: {str(e)}"
+        # Query for the latest export for this job_id, if any
+        export_query = (
+            db.collection("exports")
+            .where(filter=firestore.FieldFilter("job_id", "==", job_id))
+            .order_by("started_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
         )
+        export_docs = list(export_query.stream())
+        export_data = None
+        if export_docs:
+            export_data = export_docs[0].to_dict()
+            export_data = ExportSchema(**export_data)
+        else:
+            export_data = None
+
+        return GetExportResponse(
+            **job_data.model_dump(),
+            latest_export=export_data,
+        )
+
+    except Exception as e:
+        logging.error(f"Failed to get export {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get export: {str(e)}")
 
 
 if __name__ == "__main__":

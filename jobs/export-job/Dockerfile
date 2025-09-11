@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     wget \
     ca-certificates \
+    git \ 
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for C compiler
@@ -24,16 +25,15 @@ COPY pyproject.toml uv.lock ./
 
 RUN uv venv && uv sync --frozen --no-cache && uv pip list
 
+# For llama.cpp
+RUN git clone https://github.com/ggml-org/llama.cpp
+
 # Copy application code
 COPY . .
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV PORT=8080
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Expose port
-EXPOSE 8080
-
 # Run the application
-CMD ["uv", "run", "app.py"]
+CMD ["uv", "run", "main.py"]
