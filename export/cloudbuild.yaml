@@ -1,0 +1,31 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest",
+      ]
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "export-service"
+      - "--image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-service:latest"
+      - "--region=us-central1"
+      - "--platform=managed"
+      - "--memory=2Gi"
+      - "--cpu=2"
+      - "--set-env-vars=PROJECT_ID=$PROJECT_ID"
+
+options:
+  machineType: "E2_HIGHCPU_32"

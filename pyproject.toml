@@ -1,7 +1,7 @@
 [project]
 name = "services"
 version = "0.1.0"
-description = "Add your description here"
+description = "Cloud services of the Gemma Facet project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
