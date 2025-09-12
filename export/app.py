@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List
+from typing import List, Optional
 import uuid
 import firebase_admin
 from firebase_admin import auth
@@ -8,7 +8,14 @@ from google.cloud import firestore
 from google.cloud import run_v2
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from schema import ExportRequest, ExportAck, ExportSchema, JobSchema, GetExportResponse
+from schema import (
+    ExportRequest,
+    ExportAck,
+    ExportSchema,
+    JobSchema,
+    GetExportResponse,
+    export_destination,
+)
 from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv())
@@ -84,14 +91,20 @@ def get_current_user_id(
         )
 
 
-def create_export_document(job_id: str, export_type: str, user_id: str) -> str:
+def create_export_document(
+    job_id: str,
+    export_type: str,
+    destination: List[export_destination],
+    hf_repo_id: Optional[str] = None,
+) -> str:
     """
     Create an export document in Firestore and return the export_id.
 
     Args:
         job_id: The training job ID
         export_type: Type of export (adapter, merged, gguf)
-        user_id: User ID who requested the export
+        destination: Destination of export (gcs, hf_hub)
+        hf_repo_id: Hugging Face repository ID
 
     Returns:
         str: The export document ID
@@ -102,6 +115,8 @@ def create_export_document(job_id: str, export_type: str, user_id: str) -> str:
         "export_id": export_id,
         "job_id": job_id,
         "type": export_type,
+        "destination": destination,
+        "hf_repo_id": hf_repo_id,
         "status": "running",
         "message": "Export job started",
         "artifacts": [],
@@ -186,11 +201,24 @@ async def export(
         logging.error(f"Failed to verify job ownership: {e}")
         raise HTTPException(status_code=500, detail="Failed to verify job ownership")
 
+    if "hf_hub" in request.destination and not request.hf_repo_id:
+        raise HTTPException(
+            status_code=400, detail="HF repo ID is required when export is to HF hub"
+        )
+
+    if "hf_hub" in request.destination and not request.hf_token:
+        raise HTTPException(
+            status_code=400, detail="HF token is required when export is to HF hub"
+        )
+
     # Create export document and trigger job
     try:
         # Create export document in Firestore
         export_id = create_export_document(
-            request.job_id, request.export_type, current_user_id
+            request.job_id,
+            request.export_type,
+            request.destination,
+            request.hf_repo_id,
         )
 
         # Trigger Cloud Run Job

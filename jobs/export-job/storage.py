@@ -3,6 +3,8 @@ import logging
 import shutil
 import zipfile
 from google.cloud import storage
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 
 class GCSStorageManager:
@@ -97,6 +99,57 @@ class GCSStorageManager:
         except Exception as e:
             self.logger.error(f"Failed to download directory {gcs_full_path}: {str(e)}")
             raise Exception(f"Directory download failed: {str(e)}")
+
+    def _download_file(self, https_url: str) -> str:
+        """
+        Download a single file from an HTTPS URL to a local temporary file.
+
+        Args:
+            https_url: Public HTTPS URL to the file (must start with "https://")
+
+        Returns:
+            str: Local filesystem path to the downloaded file
+
+        Raises:
+            Exception: If validation or download fails
+        """
+        try:
+            if not isinstance(https_url, str) or not https_url.startswith("https://"):
+                raise ValueError(f"Invalid HTTPS URL: {https_url}")
+
+            parsed = urlparse(https_url)
+            # Derive filename from path; fallback to a default name
+            filename = os.path.basename(parsed.path) or "downloaded_file"
+
+            # Ensure a dedicated temp directory for single-file downloads
+            local_dir = "/tmp/file"
+            os.makedirs(local_dir, exist_ok=True)
+            local_file_path = os.path.join(local_dir, filename)
+
+            self.logger.info(f"Downloading file from {https_url} to {local_file_path}")
+
+            # Stream download to avoid holding whole file in memory
+            with urlopen(https_url) as response, open(local_file_path, "wb") as out_f:
+                # 64 KiB chunks
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk:
+                        break
+                    out_f.write(chunk)
+
+            # Basic sanity check that file exists and is not empty
+            if (
+                not os.path.exists(local_file_path)
+                or os.path.getsize(local_file_path) == 0
+            ):
+                raise Exception("Downloaded file is missing or empty")
+
+            self.logger.info(f"Successfully downloaded file to {local_file_path}")
+            return local_file_path
+
+        except Exception as e:
+            self.logger.error(f"Failed to download file from {https_url}: {str(e)}")
+            raise Exception(f"HTTPS file download failed: {str(e)}")
 
     def _upload_directory(
         self, local_directory_path: str, gcs_destination_path: str
