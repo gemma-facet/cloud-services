@@ -641,11 +641,20 @@ class ExportUtils:
 
         # Check if GGUF model already exported
         if self.job_doc.artifacts.file.gguf:
-            logger.info(f"GGUF model already exported for job {self.job_id}")
-            self._update_status(
-                "completed", "GGUF model already present in the database."
-            )
-            return
+            logger.info(f"GGUF model already present in db for job {self.job_id}")
+
+            if "hf_hub" in self.export_doc.destination:
+                local_gguf_path = gcs_storage._download_file(
+                    self.job_doc.artifacts.file.gguf
+                )
+                self._push_gguf_to_hf_hub(local_gguf_path)
+                self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+                self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+                logger.info(
+                    f"Successfully pushed GGUF model to HF Hub: {self.export_doc.hf_repo_id}"
+                )
+                self._update_status("completed", "GGUF model exported successfully.")
+                return
 
         local_merged_path = None
         try:
