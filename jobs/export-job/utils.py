@@ -17,6 +17,12 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
 class ExportUtils:
     """
     Utility class for export job operations.
@@ -55,8 +61,6 @@ class ExportUtils:
         self.job_doc = self.job_ref.get().to_dict()
         self.job_doc = JobSchema(**self.job_doc)
         self.hf_token = hf_token
-
-        self.logger = logging.getLogger(__name__)
 
     def _get_backend_provider(
         self, base_model_id: str
@@ -102,19 +106,19 @@ class ExportUtils:
             Exception: If merging fails
         """
         try:
-            self.logger.info(f"Starting model merge for job {job_id}")
-            self.logger.info(f"Local adapter path: {local_adapter_path}")
-            self.logger.info(f"Base model: {base_model_id}")
+            logger.info(f"Starting model merge for job {job_id}")
+            logger.info(f"Local adapter path: {local_adapter_path}")
+            logger.info(f"Base model: {base_model_id}")
 
             backend_provider = self._get_backend_provider(base_model_id)
-            self.logger.info(f"Backend provider: {backend_provider}")
+            logger.info(f"Backend provider: {backend_provider}")
 
             # Login to Hugging Face if token provided
             if hf_token:
                 from huggingface_hub import login
 
                 login(token=hf_token)
-                self.logger.info("Logged into Hugging Face")
+                logger.info("Logged into Hugging Face")
 
             return_model = None
             return_tokenizer = None
@@ -123,7 +127,7 @@ class ExportUtils:
             if backend_provider == "unsloth":
                 from unsloth import FastModel
 
-                logging.info("Loading adapter model from Unsloth")
+                logger.info("Loading adapter model from Unsloth")
 
                 model, tokenizer = FastModel.from_pretrained(
                     model_name=local_adapter_path,
@@ -131,7 +135,7 @@ class ExportUtils:
                     load_in_4bit=True,
                 )
 
-                logging.info("Merging model with Unsloth")
+                logger.info("Merging model with Unsloth")
 
                 model.save_pretrained_merged(
                     "merged_model", tokenizer, save_method="merged_16bit"
@@ -156,13 +160,13 @@ class ExportUtils:
             if cleanup_temp:
                 gcs_storage._cleanup_local_directory(merged_model_path)
             else:
-                self.logger.info("Keeping temp files for further processing")
+                logger.info("Keeping temp files for further processing")
 
-            self.logger.info(f"Successfully merged model for job {job_id}")
+            logger.info(f"Successfully merged model for job {job_id}")
             return merged_model_path, return_model, return_tokenizer
 
         except Exception as e:
-            self.logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
+            logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
             raise Exception(f"Model merging failed: {str(e)}")
 
     def _run_llama_cpp_conversion(self, local_merged_path: str, job_id: str) -> str:
@@ -194,7 +198,7 @@ class ExportUtils:
                 "q8_0",  # Default quantization
             ]
 
-            self.logger.info(f"Running llama.cpp conversion: {' '.join(cmd)}")
+            logger.info(f"Running llama.cpp conversion: {' '.join(cmd)}")
 
             result = subprocess.run(
                 cmd,
@@ -205,20 +209,20 @@ class ExportUtils:
             )
 
             if result.returncode != 0:
-                self.logger.error(f"llama.cpp conversion failed: {result.stderr}")
+                logger.error(f"llama.cpp conversion failed: {result.stderr}")
                 raise Exception(f"llama.cpp conversion failed: {result.stderr}")
 
             if not os.path.exists(output_file):
                 raise Exception("GGUF file was not created")
 
-            self.logger.info(f"Successfully converted to GGUF: {output_file}")
+            logger.info(f"Successfully converted to GGUF: {output_file}")
             return output_file
 
         except subprocess.TimeoutExpired:
-            self.logger.error("llama.cpp conversion timed out")
+            logger.error("llama.cpp conversion timed out")
             raise Exception("llama.cpp conversion timed out")
         except Exception as e:
-            self.logger.error(f"Failed to run llama.cpp conversion: {str(e)}")
+            logger.error(f"Failed to run llama.cpp conversion: {str(e)}")
             raise Exception(f"llama.cpp conversion failed: {str(e)}")
 
     def _update_status(self, status: export_status, message: Optional[str] = None):
@@ -277,16 +281,16 @@ class ExportUtils:
             Exception: If pushing to HF Hub fails
         """
         try:
-            self.logger.info(
+            logger.info(
                 f"Starting adapter push to HF Hub: {self.export_doc.hf_repo_id}"
             )
-            self.logger.info(f"Local adapter path: {local_adapter_path}")
+            logger.info(f"Local adapter path: {local_adapter_path}")
 
             backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
-            self.logger.info(f"Backend provider: {backend_provider}")
+            logger.info(f"Backend provider: {backend_provider}")
 
             if backend_provider == "unsloth":
-                self.logger.info("Loading adapter model from Unsloth for HF Hub push")
+                logger.info("Loading adapter model from Unsloth for HF Hub push")
                 from unsloth import FastModel
 
                 model, tokenizer = FastModel.from_pretrained(
@@ -295,51 +299,49 @@ class ExportUtils:
                     load_in_4bit=True,
                 )
 
-                self.logger.info("Pushing Unsloth model to HF Hub")
+                logger.info("Pushing Unsloth model to HF Hub")
                 model.push_to_hub(
                     self.export_doc.hf_repo_id,
                     safe_serialization=True,
                     token=self.hf_token,
                 )
-                self.logger.info("Pushing Unsloth tokenizer to HF Hub")
+                logger.info("Pushing Unsloth tokenizer to HF Hub")
                 tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
 
             elif backend_provider == "huggingface":
-                self.logger.info(
-                    "Loading adapter model from Hugging Face for HF Hub push"
-                )
+                logger.info("Loading adapter model from Hugging Face for HF Hub push")
                 from peft import PeftModel
                 from transformers import AutoTokenizer
 
-                self.logger.info(f"Loading base model: {self.job_doc.base_model_id}")
+                logger.info(f"Loading base model: {self.job_doc.base_model_id}")
                 model = PeftModel.from_pretrained(
                     self.job_doc.base_model_id, local_adapter_path
                 )
-                self.logger.info("Loading tokenizer for base model")
+                logger.info("Loading tokenizer for base model")
                 tokenizer = AutoTokenizer.from_pretrained(self.job_doc.base_model_id)
 
-                self.logger.info("Pushing Hugging Face model to HF Hub")
+                logger.info("Pushing Hugging Face model to HF Hub")
                 model.push_to_hub(
                     self.export_doc.hf_repo_id,
                     safe_serialization=True,
                     token=self.hf_token,
                 )
-                self.logger.info("Pushing Hugging Face tokenizer to HF Hub")
+                logger.info("Pushing Hugging Face tokenizer to HF Hub")
                 tokenizer.push_to_hub(self.export_doc.hf_repo_id, token=self.hf_token)
 
-            self.logger.info("Updating export artifacts with HF Hub path")
+            logger.info("Updating export artifacts with HF Hub path")
             self._update_export_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
-            self.logger.info("Updating job artifacts with HF Hub path")
+            logger.info("Updating job artifacts with HF Hub path")
             self._update_job_artifacts("adapter", "hf", self.export_doc.hf_repo_id)
 
-            self.logger.info(
+            logger.info(
                 f"Successfully pushed adapter to HF Hub: {self.export_doc.hf_repo_id}"
             )
 
         except Exception as e:
-            self.logger.error(f"Failed to push adapter to HF Hub: {str(e)}")
-            self.logger.error(f"Adapter path: {local_adapter_path}")
-            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            logger.error(f"Failed to push adapter to HF Hub: {str(e)}")
+            logger.error(f"Adapter path: {local_adapter_path}")
+            logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
             raise Exception(f"Failed to push adapter to HF Hub: {str(e)}")
 
     def _push_merged_to_hf_hub(
@@ -356,50 +358,48 @@ class ExportUtils:
             Exception: If pushing to HF Hub fails
         """
         try:
-            self.logger.info(
+            logger.info(
                 f"Starting merged model push to HF Hub: {self.export_doc.hf_repo_id}"
             )
-            self.logger.info(f"Model type: {type(model)}")
-            self.logger.info(f"Tokenizer type: {type(tokenizer)}")
+            logger.info(f"Model type: {type(model)}")
+            logger.info(f"Tokenizer type: {type(tokenizer)}")
 
             backend_provider = self._get_backend_provider(self.job_doc.base_model_id)
-            self.logger.info(f"Backend provider: {backend_provider}")
+            logger.info(f"Backend provider: {backend_provider}")
 
             if backend_provider == "unsloth":
-                self.logger.info("Pushing Unsloth merged model to HF Hub")
+                logger.info("Pushing Unsloth merged model to HF Hub")
                 if tokenizer is None:
-                    self.logger.warning("Tokenizer is None for Unsloth model push")
+                    logger.warning("Tokenizer is None for Unsloth model push")
                 model.push_to_hub_merged(
                     self.export_doc.hf_repo_id, tokenizer, token=self.hf_token
                 )
-                self.logger.info("Successfully pushed Unsloth merged model to HF Hub")
+                logger.info("Successfully pushed Unsloth merged model to HF Hub")
 
             elif backend_provider == "huggingface":
-                self.logger.info("Pushing Hugging Face merged model to HF Hub")
+                logger.info("Pushing Hugging Face merged model to HF Hub")
                 model.push_to_hub(
                     self.export_doc.hf_repo_id,
                     safe_serialization=True,
                     token=self.hf_token,
                 )
-                self.logger.info(
-                    "Successfully pushed Hugging Face merged model to HF Hub"
-                )
+                logger.info("Successfully pushed Hugging Face merged model to HF Hub")
 
-            self.logger.info("Updating export artifacts with HF Hub path")
+            logger.info("Updating export artifacts with HF Hub path")
             self._update_export_artifacts("merged", "hf", self.export_doc.hf_repo_id)
-            self.logger.info("Updating job artifacts with HF Hub path")
+            logger.info("Updating job artifacts with HF Hub path")
             self._update_job_artifacts("merged", "hf", self.export_doc.hf_repo_id)
 
-            self.logger.info(
+            logger.info(
                 f"Successfully pushed merged model to HF Hub: {self.export_doc.hf_repo_id}"
             )
 
         except Exception as e:
-            self.logger.error(f"Failed to push merged model to HF Hub: {str(e)}")
-            self.logger.error(f"Model type: {type(model)}")
-            self.logger.error(f"Tokenizer type: {type(tokenizer)}")
-            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
-            self.logger.error(f"Backend provider: {backend_provider}")
+            logger.error(f"Failed to push merged model to HF Hub: {str(e)}")
+            logger.error(f"Model type: {type(model)}")
+            logger.error(f"Tokenizer type: {type(tokenizer)}")
+            logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            logger.error(f"Backend provider: {backend_provider}")
             raise Exception(f"Failed to push merged model to HF Hub: {str(e)}")
 
     def _push_gguf_to_hf_hub(self, gguf_file_path: str):
@@ -413,10 +413,10 @@ class ExportUtils:
             Exception: If pushing to HF Hub fails
         """
         try:
-            self.logger.info(
+            logger.info(
                 f"Starting GGUF file push to HF Hub: {self.export_doc.hf_repo_id}"
             )
-            self.logger.info(f"GGUF file path: {gguf_file_path}")
+            logger.info(f"GGUF file path: {gguf_file_path}")
 
             # Import required modules
             from huggingface_hub import HfApi, login
@@ -427,48 +427,48 @@ class ExportUtils:
                 raise FileNotFoundError(f"GGUF file not found: {gguf_file_path}")
 
             file_size = os.path.getsize(gguf_file_path)
-            self.logger.info(f"GGUF file size: {file_size / (1024 * 1024):.2f} MB")
+            logger.info(f"GGUF file size: {file_size / (1024 * 1024):.2f} MB")
 
             # Login to Hugging Face
-            self.logger.info("Logging into Hugging Face")
+            logger.info("Logging into Hugging Face")
             login(token=self.hf_token)
-            self.logger.info("Successfully logged into Hugging Face")
+            logger.info("Successfully logged into Hugging Face")
 
             # Initialize HF API
-            self.logger.info("Initializing Hugging Face API")
+            logger.info("Initializing Hugging Face API")
             api = HfApi()
 
             # Create repository
-            self.logger.info(f"Creating repository: {self.export_doc.hf_repo_id}")
+            logger.info(f"Creating repository: {self.export_doc.hf_repo_id}")
             api.create_repo(repo_id=self.export_doc.hf_repo_id, exist_ok=True)
-            self.logger.info("Repository created or already exists")
+            logger.info("Repository created or already exists")
 
             # Upload GGUF file
-            self.logger.info("Uploading GGUF file to HF Hub")
+            logger.info("Uploading GGUF file to HF Hub")
             api.upload_file(
                 path_or_fileobj=gguf_file_path,
                 path_in_repo="model.gguf",
                 repo_id=self.export_doc.hf_repo_id,
                 repo_type="model",
             )
-            self.logger.info("Successfully uploaded GGUF file to HF Hub")
+            logger.info("Successfully uploaded GGUF file to HF Hub")
 
             # Update artifacts
             self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
             self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
 
-            self.logger.info(
+            logger.info(
                 f"Successfully pushed GGUF file to HF Hub: {self.export_doc.hf_repo_id}"
             )
 
         except FileNotFoundError as e:
-            self.logger.error(f"GGUF file not found: {str(e)}")
-            self.logger.error(f"Expected file path: {gguf_file_path}")
+            logger.error(f"GGUF file not found: {str(e)}")
+            logger.error(f"Expected file path: {gguf_file_path}")
             raise Exception(f"GGUF file not found: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Failed to push GGUF file to HF Hub: {str(e)}")
-            self.logger.error(f"GGUF file path: {gguf_file_path}")
-            self.logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
+            logger.error(f"Failed to push GGUF file to HF Hub: {str(e)}")
+            logger.error(f"GGUF file path: {gguf_file_path}")
+            logger.error(f"HF repo ID: {self.export_doc.hf_repo_id}")
             raise Exception(f"Failed to push GGUF file to HF Hub: {str(e)}")
 
     def export_adapter(self):
@@ -481,11 +481,11 @@ class ExportUtils:
         Raises:
             ValueError: If adapter path is not found in the job document
         """
-        self.logger.info(f"Exporting adapter for job {self.job_id}")
+        logger.info(f"Exporting adapter for job {self.job_id}")
         self._update_status("running", "Preparing adapter export")
 
         if self.job_doc.artifacts.file.adapter:
-            self.logger.info(f"Adapter already exported for job {self.job_id}")
+            logger.info(f"Adapter already exported for job {self.job_id}")
             self._update_status("completed", "Adapter already present in the database.")
             return
 
@@ -514,9 +514,7 @@ class ExportUtils:
             self._update_status("completed", "Adapter exported successfully.")
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to export adapter for job {self.job_id}: {str(e)}"
-            )
+            logger.error(f"Failed to export adapter for job {self.job_id}: {str(e)}")
             self._update_status("failed", f"Adapter export failed: {str(e)}")
             raise Exception(f"Adapter export failed: {str(e)}")
         finally:
@@ -537,12 +535,12 @@ class ExportUtils:
         Raises:
             ValueError: If neither merged_path nor adapter_path/base_model_id are available
         """
-        self.logger.info(f"Exporting merged model for job {self.job_id}")
+        logger.info(f"Exporting merged model for job {self.job_id}")
         self._update_status("running", "Preparing merged model export")
 
         # Check if merged model already exported
         if self.job_doc.artifacts.file.merged:
-            self.logger.info(f"Merged model already exported for job {self.job_id}")
+            logger.info(f"Merged model already exported for job {self.job_id}")
             self._update_status(
                 "completed", "Merged model already present in the database."
             )
@@ -553,7 +551,7 @@ class ExportUtils:
             # Check if merged model already exists in raw artifacts
             if self.job_doc.artifacts.raw.merged:
                 # Download existing merged model
-                self.logger.info(
+                logger.info(
                     f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
                 )
                 local_merged_path = gcs_storage._download_directory(
@@ -566,14 +564,13 @@ class ExportUtils:
                         "adapter_path and base_model_id required to create merged model"
                     )
 
-                self.logger.info("Creating merged model from adapter")
+                logger.info("Creating merged model from adapter")
                 # Download adapter first
                 local_adapter_path = gcs_storage._download_directory(
                     self.job_doc.adapter_path
                 )
 
                 self._update_status("running", "Merging model with adapter")
-                # Merge model locally using the old ModelExportUtils logic
                 local_merged_path, model, tokenizer = self._merge_model(
                     local_adapter_path,
                     self.job_doc.base_model_id,
@@ -595,7 +592,7 @@ class ExportUtils:
 
                 self._update_job_artifacts("merged", "raw", merged_gcs_path)
                 self._update_export_artifacts("merged", "raw", merged_gcs_path)
-                self.logger.info(f"Updated raw merged model path: {merged_gcs_path}")
+                logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
             if "hf_hub" in self.export_doc.destination:
                 self._push_merged_to_hf_hub(model, tokenizer)
@@ -616,7 +613,7 @@ class ExportUtils:
             self._update_status("completed", "Merged model exported successfully.")
 
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 f"Failed to export merged model for job {self.job_id}: {str(e)}"
             )
             self._update_status("failed", f"Merged model export failed: {str(e)}")
@@ -639,12 +636,12 @@ class ExportUtils:
         Raises:
             ValueError: If neither merged_path nor adapter_path/base_model_id are available
         """
-        self.logger.info(f"Exporting GGUF model for job {self.job_id}")
+        logger.info(f"Exporting GGUF model for job {self.job_id}")
         self._update_status("running", "Preparing GGUF export")
 
         # Check if GGUF model already exported
         if self.job_doc.artifacts.file.gguf:
-            self.logger.info(f"GGUF model already exported for job {self.job_id}")
+            logger.info(f"GGUF model already exported for job {self.job_id}")
             self._update_status(
                 "completed", "GGUF model already present in the database."
             )
@@ -655,7 +652,7 @@ class ExportUtils:
             # Check if merged model already exists in raw artifacts
             if self.job_doc.artifacts.raw.merged:
                 # Download existing merged model
-                self.logger.info(
+                logger.info(
                     f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
                 )
                 local_merged_path = gcs_storage._download_directory(
@@ -668,9 +665,7 @@ class ExportUtils:
                         "adapter_path and base_model_id required to create merged model"
                     )
 
-                self.logger.info(
-                    "Creating merged model from adapter for GGUF conversion"
-                )
+                logger.info("Creating merged model from adapter for GGUF conversion")
                 # Download adapter first
                 local_adapter_path = gcs_storage._download_directory(
                     self.job_doc.adapter_path
@@ -700,7 +695,7 @@ class ExportUtils:
                 # Update raw artifacts
                 self._update_job_artifacts("merged", "raw", merged_gcs_path)
                 self._update_export_artifacts("merged", "raw", merged_gcs_path)
-                self.logger.info(f"Updated raw merged model path: {merged_gcs_path}")
+                logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
             # Convert to GGUF
             self._update_status("running", "Converting model to GGUF format")
@@ -727,9 +722,7 @@ class ExportUtils:
             self._update_status("completed", "GGUF model exported successfully.")
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to export GGUF model for job {self.job_id}: {str(e)}"
-            )
+            logger.error(f"Failed to export GGUF model for job {self.job_id}: {str(e)}")
             self._update_status("failed", f"GGUF model export failed: {str(e)}")
             raise Exception(f"GGUF model export failed: {str(e)}")
         finally:
