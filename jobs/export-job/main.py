@@ -1,10 +1,9 @@
 import os
-import logging
 import sys
 from datetime import datetime
 from google.cloud import firestore
 from dotenv import load_dotenv, find_dotenv
-from utils import ExportUtils
+from utils import ExportUtils, logger
 from schema import ExportSchema
 
 # Load environment variables
@@ -15,12 +14,12 @@ def main():
     try:
         export_id = os.getenv("EXPORT_ID")
         if not export_id:
-            logging.error("Error: EXPORT_ID environment variable is required")
+            logger.error("Error: EXPORT_ID environment variable is required")
             raise ValueError("EXPORT_ID environment variable is required")
 
         project_id = os.getenv("PROJECT_ID")
         if not project_id:
-            logging.error("Error: PROJECT_ID environment variable is required")
+            logger.error("Error: PROJECT_ID environment variable is required")
             raise ValueError("PROJECT_ID environment variable is required")
 
         hf_token = os.getenv("HF_TOKEN", None)
@@ -30,7 +29,7 @@ def main():
         export_ref = db.collection("exports").document(export_id)
         export_doc = export_ref.get()
         if not export_doc.exists:
-            logging.error(f"Error: Export {export_id} not found")
+            logger.error(f"Error: Export {export_id} not found")
             raise ValueError(f"Export {export_id} not found")
 
         export_data = export_doc.to_dict()
@@ -38,15 +37,15 @@ def main():
 
         export_type = export_data.type
         if not export_type:
-            logging.error(f"Error: Export type not found for export {export_id}")
+            logger.error(f"Error: Export type not found for export {export_id}")
             raise ValueError(f"Export type not found for export {export_id}")
 
         if "hf_hub" in export_data.destination and not hf_token:
-            logging.error(f"Error: HF token not found for export {export_id}")
+            logger.error(f"Error: HF token not found for export {export_id}")
             raise ValueError(f"HF token not found for export {export_id}")
 
         if "hf_hub" in export_data.destination and not export_data.hf_repo_id:
-            logging.error(f"Error: HF repo ID not found for export {export_id}")
+            logger.error(f"Error: HF repo ID not found for export {export_id}")
             raise ValueError(f"HF repo ID not found for export {export_id}")
 
         export_utils = ExportUtils(db, export_id, project_id, hf_token)
@@ -58,7 +57,7 @@ def main():
         elif export_type == "gguf":
             export_utils.export_gguf()
         else:
-            logging.error(f"Error: Unsupported export type: {export_type}")
+            logger.error(f"Error: Unsupported export type: {export_type}")
             raise ValueError(f"Unsupported export type: {export_type}")
 
         export_ref.update(
@@ -66,7 +65,7 @@ def main():
         )
 
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logger.error(f"Error: {e}")
         export_ref.update(
             {"status": "failed", "message": str(e), "finished_at": datetime.now()}
         )
