@@ -529,8 +529,15 @@ class ExportUtils:
         logger.info(f"Exporting adapter for job {self.job_id}")
         self._update_status("running", "Preparing adapter export")
 
-        if self.job_doc.artifacts.file.adapter:
-            logger.info(f"Adapter already exported for job {self.job_id}")
+        destinations = self.export_doc.destination or []
+        need_gcs = "gcs" in destinations
+        need_hf = "hf_hub" in destinations
+
+        # If ONLY GCS is requested and zip already exists, short-circuit
+        if need_gcs and not need_hf and self.job_doc.artifacts.file.adapter:
+            logger.info(
+                f"Adapter zip already present for job {self.job_id}; skipping work."
+            )
             self._update_status("completed", "Adapter already present in the database.")
             return
 
@@ -542,10 +549,10 @@ class ExportUtils:
             adapter_path = self.job_doc.adapter_path
             local_adapter_path = gcs_storage._download_directory(adapter_path)
 
-            if "hf_hub" in self.export_doc.destination:
+            if need_hf:
                 self._push_adapter_to_hf_hub(local_adapter_path)
 
-            if "gcs" in self.export_doc.destination:
+            if need_gcs:
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
                 )
