@@ -169,6 +169,51 @@ class ExportUtils:
             logger.error(f"Failed to merge model for job {job_id}: {str(e)}")
             raise Exception(f"Model merging failed: {str(e)}")
 
+    def _load_merged_model(
+        self, local_merged_path: str, base_model_id: str
+    ) -> Tuple[Union["FastModel", "PreTrainedModel"], Union[Any, None]]:
+        """
+        Load a merged model and (optionally) tokenizer from a local path based on provider.
+
+        This is only used when an HF Hub export is requested and the merged model
+        was downloaded from GCS rather than freshly merged in-process.
+
+        Args:
+            local_merged_path: Local path to the merged model directory
+            base_model_id: Base model identifier to determine provider and tokenizer
+
+        Returns:
+            Tuple[model, tokenizer]: The loaded model and its tokenizer (tokenizer may be None)
+        """
+        try:
+            backend_provider = self._get_backend_provider(base_model_id)
+            logger.info(
+                f"Loading merged model from {local_merged_path} using provider: {backend_provider}"
+            )
+
+            if backend_provider == "unsloth":
+                from unsloth import FastModel
+
+                model, tokenizer = FastModel.from_pretrained(
+                    model_name=local_merged_path,
+                    max_seq_length=2048,
+                    load_in_4bit=True,
+                )
+                return model, tokenizer
+
+            else:
+                from transformers import AutoModelForCausalLM
+
+                # For HF models, tokenizer is not required for push; return None
+                model = AutoModelForCausalLM.from_pretrained(local_merged_path)
+                return model, None
+
+        except Exception as e:
+            logger.error(
+                f"Failed to load merged model from {local_merged_path}: {str(e)}"
+            )
+            raise
+
     def _run_llama_cpp_conversion(self, local_merged_path: str, job_id: str) -> str:
         """
         Run llama.cpp conversion to convert model to GGUF format.
@@ -528,9 +573,10 @@ class ExportUtils:
         """
         Export the merged model from the training job.
 
-        Downloads the merged model from GCS (or creates it from adapter if not available),
-        creates a zip file, uploads it to the export bucket, and updates both the export job
-        and training job with the artifact information.
+        Supports multiple destinations: GCS (zip) and/or HF Hub. The flow is optimized to:
+        - Short-circuit if ONLY GCS zip is requested and already present.
+        - Avoid loading models into memory unless HF Hub export is requested.
+        - Reuse raw merged artifact if available; otherwise, merge from adapter.
 
         Raises:
             ValueError: If neither merged_path nor adapter_path/base_model_id are available
@@ -538,15 +584,23 @@ class ExportUtils:
         logger.info(f"Exporting merged model for job {self.job_id}")
         self._update_status("running", "Preparing merged model export")
 
-        # Check if merged model already exported
-        if self.job_doc.artifacts.file.merged:
-            logger.info(f"Merged model already exported for job {self.job_id}")
+        destinations = self.export_doc.destination or []
+        need_gcs = "gcs" in destinations
+        need_hf = "hf_hub" in destinations
+
+        # If ONLY GCS is requested and zip already exists, short-circuit
+        if need_gcs and not need_hf and self.job_doc.artifacts.file.merged:
+            logger.info(
+                f"Merged model zip already present for job {self.job_id}; skipping work."
+            )
             self._update_status(
                 "completed", "Merged model already present in the database."
             )
             return
 
         local_merged_path = None
+        model = None
+        tokenizer = None
         try:
             # Check if merged model already exists in raw artifacts
             if self.job_doc.artifacts.raw.merged:
@@ -557,6 +611,12 @@ class ExportUtils:
                 local_merged_path = gcs_storage._download_directory(
                     self.job_doc.artifacts.raw.merged
                 )
+
+                # Only load into memory if HF Hub export is requested
+                if need_hf:
+                    model, tokenizer = self._load_merged_model(
+                        local_merged_path, self.job_doc.base_model_id
+                    )
             else:
                 # Create merged model from adapter
                 if not self.job_doc.adapter_path or not self.job_doc.base_model_id:
@@ -582,7 +642,7 @@ class ExportUtils:
                 # Clean up downloaded adapter
                 gcs_storage._cleanup_local_directory(local_adapter_path)
 
-                # Upload merged model to export bucket for raw artifacts
+                # Ensure raw artifact exists in GCS for reuse in future
                 export_destination = (
                     f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
                 )
@@ -594,10 +654,10 @@ class ExportUtils:
                 self._update_export_artifacts("merged", "raw", merged_gcs_path)
                 logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
-            if "hf_hub" in self.export_doc.destination:
+            if need_hf:
                 self._push_merged_to_hf_hub(model, tokenizer)
 
-            if "gcs" in self.export_doc.destination:
+            if need_gcs:
                 # Zip and upload to files bucket
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
