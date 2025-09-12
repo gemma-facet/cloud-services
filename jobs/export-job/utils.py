@@ -706,22 +706,36 @@ class ExportUtils:
         logger.info(f"Exporting GGUF model for job {self.job_id}")
         self._update_status("running", "Preparing GGUF export")
 
-        # Check if GGUF model already exported
-        if self.job_doc.artifacts.file.gguf:
-            logger.info(f"GGUF model already present in db for job {self.job_id}")
+        destinations = self.export_doc.destination or []
+        need_gcs = "gcs" in destinations
+        need_hf = "hf_hub" in destinations
 
-            if "hf_hub" in self.export_doc.destination:
-                local_gguf_path = gcs_storage._download_file(
-                    self.job_doc.artifacts.file.gguf
-                )
-                self._push_gguf_to_hf_hub(local_gguf_path)
-                self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
-                self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
-                logger.info(
-                    f"Successfully pushed GGUF model to HF Hub: {self.export_doc.hf_repo_id}"
-                )
-                self._update_status("completed", "GGUF model exported successfully.")
-                return
+        # If ONLY GCS is requested and GGUF zip already exists, short-circuit
+        if need_gcs and not need_hf and self.job_doc.artifacts.file.gguf:
+            logger.info(
+                f"GGUF zip already present for job {self.job_id}; skipping work."
+            )
+            self._update_status(
+                "completed", "GGUF model already present in the database."
+            )
+            return
+
+        # If GGUF zip exists and HF Hub is requested, reuse it by downloading and pushing
+        if self.job_doc.artifacts.file.gguf and need_hf:
+            logger.info(
+                f"GGUF model already present in db for job {self.job_id}, pushing to HF Hub"
+            )
+            local_gguf_path = gcs_storage._download_file(
+                self.job_doc.artifacts.file.gguf
+            )
+            self._push_gguf_to_hf_hub(local_gguf_path)
+            self._update_export_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+            self._update_job_artifacts("gguf", "hf", self.export_doc.hf_repo_id)
+            logger.info(
+                f"Successfully pushed GGUF model to HF Hub: {self.export_doc.hf_repo_id}"
+            )
+            self._update_status("completed", "GGUF model exported successfully.")
+            return
 
         local_merged_path = None
         try:
@@ -779,10 +793,10 @@ class ExportUtils:
                 local_merged_path, self.job_id
             )
 
-            if "hf_hub" in self.export_doc.destination:
+            if need_hf:
                 self._push_gguf_to_hf_hub(gguf_file_path)
 
-            if "gcs" in self.export_doc.destination:
+            if need_gcs:
                 # Upload GGUF to files bucket
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
