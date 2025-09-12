@@ -68,6 +68,7 @@ class JobArtifacts(BaseModel):
 # NOTE: This struct is shared between the API and the backend service
 class JobSchema(BaseModel):
     job_id: str
+    job_name: str
     user_id: str
     adapter_path: str
     base_model_id: str
