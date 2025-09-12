@@ -547,15 +547,21 @@ class ExportUtils:
         local_adapter_path = None
         try:
             adapter_path = self.job_doc.adapter_path
+            self._update_status("running", "Downloading adapter from GCS")
+            logger.info(f"Downloading adapter from {adapter_path}")
             local_adapter_path = gcs_storage._download_directory(adapter_path)
 
             if need_hf:
+                self._update_status("running", "Pushing adapter to Hugging Face Hub")
+                logger.info("Pushing adapter to HF Hub")
                 self._push_adapter_to_hf_hub(local_adapter_path)
 
             if need_gcs:
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
                 )
+                self._update_status("running", "Uploading adapter zip to GCS")
+                logger.info(f"Zipping and uploading adapter to {files_destination}")
                 gcs_zip_path = gcs_storage._zip_upload_file(
                     local_adapter_path, files_destination, "adapter"
                 )
@@ -615,6 +621,9 @@ class ExportUtils:
                 logger.info(
                     f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
                 )
+                self._update_status(
+                    "running", "Downloading existing merged model from GCS"
+                )
                 local_merged_path = gcs_storage._download_directory(
                     self.job_doc.artifacts.raw.merged
                 )
@@ -633,6 +642,7 @@ class ExportUtils:
 
                 logger.info("Creating merged model from adapter")
                 # Download adapter first
+                self._update_status("running", "Downloading adapter from GCS")
                 local_adapter_path = gcs_storage._download_directory(
                     self.job_doc.adapter_path
                 )
@@ -653,6 +663,7 @@ class ExportUtils:
                 export_destination = (
                     f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
                 )
+                self._update_status("running", "Uploading raw merged model to GCS")
                 merged_gcs_path = gcs_storage._upload_directory(
                     local_merged_path, export_destination
                 )
@@ -662,12 +673,20 @@ class ExportUtils:
                 logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
             if need_hf:
+                self._update_status(
+                    "running", "Pushing merged model to Hugging Face Hub"
+                )
+                logger.info("Pushing merged model to HF Hub")
                 self._push_merged_to_hf_hub(model, tokenizer)
 
             if need_gcs:
                 # Zip and upload to files bucket
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
+                )
+                self._update_status("running", "Uploading merged zip to GCS")
+                logger.info(
+                    f"Zipping and uploading merged model to {files_destination}"
                 )
                 gcs_zip_path = gcs_storage._zip_upload_file(
                     local_merged_path, files_destination, "merged"
@@ -725,6 +744,7 @@ class ExportUtils:
             logger.info(
                 f"GGUF model already present in db for job {self.job_id}, pushing to HF Hub"
             )
+            self._update_status("running", "Uploading GGUF to Hugging Face Hub")
             local_gguf_path = gcs_storage._download_file(
                 self.job_doc.artifacts.file.gguf
             )
@@ -745,6 +765,9 @@ class ExportUtils:
                 logger.info(
                     f"Downloading existing merged model: {self.job_doc.artifacts.raw.merged}"
                 )
+                self._update_status(
+                    "running", "Downloading existing merged model from GCS"
+                )
                 local_merged_path = gcs_storage._download_directory(
                     self.job_doc.artifacts.raw.merged
                 )
@@ -757,6 +780,7 @@ class ExportUtils:
 
                 logger.info("Creating merged model from adapter for GGUF conversion")
                 # Download adapter first
+                self._update_status("running", "Downloading adapter from GCS")
                 local_adapter_path = gcs_storage._download_directory(
                     self.job_doc.adapter_path
                 )
@@ -794,6 +818,8 @@ class ExportUtils:
             )
 
             if need_hf:
+                self._update_status("running", "Uploading GGUF to Hugging Face Hub")
+                logger.info("Pushing GGUF to HF Hub")
                 self._push_gguf_to_hf_hub(gguf_file_path)
 
             if need_gcs:
@@ -801,6 +827,8 @@ class ExportUtils:
                 files_destination = (
                     f"gs://{gcs_storage.export_files_bucket}/{self.job_id}"
                 )
+                self._update_status("running", "Uploading GGUF to GCS")
+                logger.info(f"Uploading GGUF to {files_destination}")
                 gcs_gguf_path = gcs_storage._upload_file(
                     gguf_file_path, files_destination, "model"
                 )
