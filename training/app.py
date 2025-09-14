@@ -176,7 +176,7 @@ async def start_training(
     # Immediately create job record in Firestore
     job_schema = JobSchema(
         job_id=job_id,
-        status=JobStatus.QUEUED,
+        status=JobStatus.QUEUED.value,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         processed_dataset_id=request.processed_dataset_id,
