@@ -25,6 +25,11 @@ variable "export_bucket_name" {
   type        = string
 }
 
+variable "files_bucket_name" {
+  description = "Name for the files bucket"
+  type        = string
+}
+
 variable "config_bucket_name" {
   description = "Name for the config bucket"
   type        = string
@@ -107,6 +112,30 @@ resource "google_storage_bucket" "export_bucket" {
   }
 
   uniform_bucket_level_access = true
+}
+
+# NOTE: This is imported directly by terraformer, it could be wrong and might need update??
+resource "google_storage_bucket" "files_bucket" {
+  default_event_based_hold = "false"
+  enable_object_retention  = "false"
+  force_destroy            = "false"
+
+  hierarchical_namespace {
+    enabled = "false"
+  }
+
+  location                 = "US"
+  name                     = var.files_bucket_name
+  public_access_prevention = "inherited"
+  requester_pays           = "false"
+  rpo                      = "DEFAULT"
+
+  soft_delete_policy {
+    retention_duration_seconds = "604800"
+  }
+
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = "true"
 }
 
 # Config bucket for training configurations

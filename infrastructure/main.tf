@@ -43,7 +43,8 @@ module "storage" {
   data_bucket_name   = "${var.project_id}-datasets"
   export_bucket_name = "${var.project_id}-models"
   config_bucket_name = "${var.project_id}-configs"
-  
+  files_bucket_name  = "${var.project_id}-files"
+
   depends_on = [module.core]
 }
 

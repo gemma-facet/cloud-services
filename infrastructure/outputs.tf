@@ -28,6 +28,11 @@ output "export_bucket_name" {
   value       = module.storage.export_bucket_name
 }
 
+output "files_bucket_name" {
+  description = "Name of the files bucket"
+  value       = module.storage.files_bucket_name
+}
+
 output "config_bucket_name" {
   description = "Name of the config bucket"
   value       = module.storage.config_bucket_name
