@@ -57,6 +57,7 @@ class JobStateManager:
         job_id: str,
         adapter_path: str,
         base_model_id: str,
+        export_format: str,
         metrics: Optional[Dict[str, Any]] = None,
         gguf_path: Optional[str] = None,
     ) -> None:
@@ -66,13 +67,21 @@ class JobStateManager:
         update_data = {
             "status": JobStatus.COMPLETED.value,
             "updated_at": datetime.now(timezone.utc),
-            "adapter_path": adapter_path,
             "base_model_id": base_model_id,
         }
+
+        # The training job saves the raw model, not a file (zip)
+        # The export job will create the file artifact (zip)
+        # NOTE: If export_format is "full", it means full fine-tune, so we save under raw.adapter as well
+        if export_format in ["adapter", "merged", "full"]:
+            if export_format == "full":
+                export_format = "adapter"
+            update_data[f"artifacts.raw.{export_format}"] = adapter_path
+
         if metrics is not None:
             update_data["metrics"] = metrics
         if gguf_path is not None:
-            update_data["gguf_path"] = gguf_path
+            update_data["artifacts.file.gguf"] = gguf_path
         self.collection.document(job_id).update(update_data)
         self.logger.info(f"Marked job {job_id} as completed")
 
@@ -131,12 +140,13 @@ class JobTracker:
         self,
         adapter_path: str,
         base_model_id: str,
+        export_format: str,
         metrics: Optional[Dict[str, Any]] = None,
         gguf_path: Optional[str] = None,
     ):
         """Mark job as completed and record evaluation metrics"""
         self.job_manager.mark_completed(
-            self.job_id, adapter_path, base_model_id, metrics, gguf_path
+            self.job_id, adapter_path, base_model_id, export_format, metrics, gguf_path
         )
 
     def failed(self, error: str):

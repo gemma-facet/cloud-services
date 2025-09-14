@@ -206,11 +206,11 @@ def save_and_track(
 
         if gguf_file_path:
             # Use save_file for single GGUF file upload, destination is always same as model
-            # NOTE: remote path at GCS is always gguf_models/{job_id}/{filename}
+            # NOTE: remote path at GCS is always {job_id}/model.gguf to be consistent with export-job
             # This is for easier access given a job_id
             gguf_remote_path = storage_strategy.save_file(
                 gguf_file_path,  # Direct path to GGUF file
-                f"gguf_models/{job_id}/{os.path.basename(gguf_file_path)}"
+                f"{job_id}/model.gguf"
                 if export_config.destination == "gcs"
                 else export_config.hf_repo_id,
             )
@@ -222,6 +222,7 @@ def save_and_track(
         job_tracker.completed(
             artifact.remote_path,
             artifact.base_model_id,
+            export_config.format,
             metrics,
             gguf_path=gguf_remote_path if gguf_file_path else None,
         )

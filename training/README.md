@@ -171,6 +171,56 @@ Delete a training job and all associated files (at firestore and GCS).
 
 Health check endpoint.
 
+## Training Jobs Document Schema
+
+This is the single-most authoritative source of truth for the training job document stored in Firestore. The following files use this exact identical schema, and if out of sync here is where it should be consulted:
+
+```json
+{
+  "job_id": "job_12345",
+  "job_name": "My Training Job",
+  "user_id": "user_abcde",
+  "base_model_id": "google/gemma-2b",
+  "processed_dataset_id": "processed_67890",
+  "modality": "text",
+  "status": "pending",
+  "dataset_id": "dataset_67890",
+  "artifacts": {
+    "raw": {
+      "adapter": "gs://bucket/trained_adapters/job_12345/adapter",
+      "merged": null,
+    },
+    "file": {
+      "adapter": "https://storage.googleapis.com/gemma-facet-files/.../adapter.zip",
+      "merged": null,
+      "gguf": "https://storage.googleapis.com/gemma-facet-files/.../model.gguf"
+    },
+    "hf": {
+      "adapter": "https://huggingface.co/username/model-name/adapter",
+      "merged": null,
+      "gguf": null
+    }
+  },
+  "created_at": "2024-10-01T12:00:00Z",
+  "updated_at": "2024-10-01T12:30:00Z"
+  "wandb_url": "https://wandb.ai/...",
+  "metrics": {
+    "accuracy": 0.95,
+    "perplexity": 1.23,
+    "eval_loss": 0.156,
+    "eval_runtime": 12.34
+  },
+  "error": "Error message if failed"
+}
+```
+
+This is used in:
+
+- `training/schema.py` and `training/job_manager.py`
+- `jobs/training-job/job_manager.py`
+- `export/schema.py`
+- `jobs/export-job/utils.py`
+
 ## Job Lifecycle
 
 1. **Submit** → Job queued in Firestore

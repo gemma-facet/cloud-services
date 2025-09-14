@@ -88,10 +88,12 @@ class CloudStorageService:
         self,
         data_bucket: str,
         export_bucket: str,
+        export_files_bucket: str,
         dataset_tracker: Optional[DatasetTracker] = None,
     ):
         self.data_bucket = data_bucket
         self.export_bucket = export_bucket
+        self.export_files_bucket = export_files_bucket
         self.storage_client = storage.Client()
         self.dataset_tracker = dataset_tracker
 
@@ -161,13 +163,13 @@ class CloudStorageService:
             str: GCS URI where the file is stored
         """
         try:
-            bucket = self.storage_client.bucket(self.export_bucket)
+            bucket = self.storage_client.bucket(self.export_files_bucket)
 
             # Upload the file
             blob = bucket.blob(remote_file_path)
             blob.upload_from_filename(local_file_path)
 
-            return f"gs://{self.export_bucket}/{remote_file_path}"
+            return f"gs://{self.export_files_bucket}/{remote_file_path}"
         except Exception as e:
             logger.error(
                 f"Error uploading file {local_file_path} to GCS: {e}",
@@ -691,9 +693,14 @@ class StorageStrategyFactory:
 # default model storage service instance
 data_bucket = os.environ.get("GCS_DATA_BUCKET_NAME", "gemma-facet-datasets")
 export_bucket = os.environ.get("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
+export_files_bucket = os.environ.get(
+    "GCS_EXPORT_FILES_BUCKET_NAME", "gemma-facet-files"
+)
 project_id = os.environ.get("PROJECT_ID")
 
 # Initialize dataset tracker if project_id is available
 dataset_tracker = DatasetTracker(project_id) if project_id else None
 
-storage_service = CloudStorageService(data_bucket, export_bucket, dataset_tracker)
+storage_service = CloudStorageService(
+    data_bucket, export_bucket, export_files_bucket, dataset_tracker
+)

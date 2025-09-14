@@ -70,7 +70,6 @@ class JobSchema(BaseModel):
     job_id: str
     job_name: str
     user_id: str
-    adapter_path: str
     base_model_id: str
     modality: Optional[Literal["text", "vision"]] = "text"
     artifacts: Optional[JobArtifacts] = Field(default_factory=JobArtifacts)
