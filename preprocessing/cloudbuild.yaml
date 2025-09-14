@@ -35,7 +35,7 @@ steps:
       ]
 
 substitutions:
-  _GCS_DATA_BUCKET_NAME: "gemma-dataset-bucket"
+  _GCS_DATA_BUCKET_NAME: "gemma-facet-datasets"
 
 options:
   machineType: "E2_HIGHCPU_8"
