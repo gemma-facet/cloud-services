@@ -34,4 +34,4 @@ steps:
       - "--set-env-vars=PROJECT_ID=$PROJECT_ID"
 
 options:
-  machineType: "E2_HIGHCPU_32"
+  machineType: "E2_HIGHCPU_8"

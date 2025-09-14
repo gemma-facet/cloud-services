@@ -125,7 +125,6 @@ async def upload_dataset(
             "filename": result.filename,
             "content_type": file.content_type or "unknown",
             "size_bytes": result.size_bytes,
-            "created_at": result.created_at,
         }
         dataset_tracker.track_raw_dataset(raw_metadata)
 
