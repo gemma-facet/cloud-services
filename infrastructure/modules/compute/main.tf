@@ -61,19 +61,19 @@ variable "inference_image_tag" {
 variable "preprocessing_max_instances" {
   description = "Maximum instances for preprocessing service"
   type        = number
-  default     = 5
+  default     = 10
 }
 
 variable "training_max_instances" {
   description = "Maximum instances for training service"
   type        = number
-  default     = 3
+  default     = 10
 }
 
 variable "inference_max_instances" {
   description = "Maximum instances for inference service"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 # Preprocessing Service
@@ -139,6 +139,8 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
         failure_threshold = 3
       }
     }
+
+    max_instance_request_concurrency = 30
   }
 }
 

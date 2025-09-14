@@ -28,12 +28,12 @@ steps:
       - "--gpu=1"
       - "--port=8080"
       - "--allow-unauthenticated"
-      - "--max-instances=2"
-      - "--concurrency=2"
+      - "--max-instances=10"
+      - "--concurrency=1"
       - "--no-gpu-zonal-redundancy"
       - "--timeout=3600"
       - "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models"
       - "--set-env-vars=PROJECT_ID=$PROJECT_ID"
 
 options:
-  machineType: "E2_HIGHCPU_32"
+  machineType: "E2_HIGHCPU_8"
