@@ -1,7 +1,7 @@
 import logging
 import torch
 from typing import Callable, Tuple, Any
-from storage import StorageStrategyFactory, CloudStoredModelMetadata
+from storage import StorageStrategyFactory
 from job_manager import JobTracker
 from schema import ExportConfig
 import os
@@ -110,9 +110,10 @@ def _prepare_gguf_export(
     if provider == "unsloth":
         return _prepare_unsloth_gguf_export(model, tokenizer, export_config, temp_dir)
     else:
-        raise NotImplementedError(
+        logging.warning(
             "HuggingFace GGUF export requires llama.cpp conversion tools, do it manually for now!"
         )
+        return None  # This avoids failing the entire training job, but no GGUF will be produced
 
 
 def _prepare_unsloth_gguf_export(
@@ -187,22 +188,26 @@ def save_and_track(
             export_config.destination
         )
 
-        # Save primary model
-        metadata = CloudStoredModelMetadata(
-            job_id=job_id,
-            base_model_id=base_model_id,
-            gcs_prefix="",  # Will be set by storage service based on format
-            provider=provider,
-            local_dir=actual_temp_dir,
-            hf_repo_id=export_config.hf_repo_id,
-            export_format=export_config.format,
-        )
-
         # The model has already been saved locally by our export logic above
-        artifact = storage_strategy.save_model(
-            actual_temp_dir,  # Local directory containing saved files
-            metadata,
-        )
+        if export_config.destination == "hfhub":
+            # HuggingFace Hub requires the hf_repo_id parameter
+            artifact = storage_strategy.save_model(
+                actual_temp_dir,  # Local directory containing saved files
+                job_id,
+                base_model_id,
+                export_config.format,
+                export_config.hf_repo_id,  # hf_repo_id parameter for HF Hub
+                provider,
+            )
+        else:
+            # GCS and other storage types
+            artifact = storage_strategy.save_model(
+                actual_temp_dir,  # Local directory containing saved files
+                job_id,
+                base_model_id,
+                export_config.format,
+                provider,
+            )
 
         if gguf_file_path:
             # Use save_file for single GGUF file upload, destination is always same as model

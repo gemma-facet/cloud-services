@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Optional, Dict, Any, Tuple, Literal
+from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from google.cloud import storage, firestore
 from datasets import Dataset
@@ -57,19 +57,6 @@ class DatasetTracker:
             return None
 
 
-@dataclass
-class CloudStoredModelMetadata:
-    job_id: str
-    base_model_id: str
-    gcs_prefix: str  # GCS folder prefix for adapter artifacts
-    provider: Literal["huggingface", "unsloth"] = "huggingface"
-    local_dir: Optional[str] = None  # Local path where artifacts are downloaded
-    hf_repo_id: Optional[str] = None  # HuggingFace repo ID if applicable
-
-    # these must match the value in export_config
-    export_format: Optional[str] = None
-
-
 class CloudStorageService:
     """
     Service for managing artifacts in Google Cloud Storage (GCS).
@@ -95,18 +82,18 @@ class CloudStorageService:
         self.storage_client = storage.Client()
         self.dataset_tracker = dataset_tracker
 
-    def upload_model(self, model_dir: str, metadata: CloudStoredModelMetadata) -> str:
+    def upload_model(self, model_dir: str, job_id: str, export_format: str) -> str:
         """
-        Upload model artifacts and metadata to GCS, return remote URI
+        Upload model artifacts to GCS, return remote URI
 
         Uses different folder structures based on export format:
         - trained_adapters/{job_id}/ for adapter-only exports
         - merged_models/{job_id}/ for merged model exports
-        - gguf_models/{job_id}/ for GGUF format exports
 
         Args:
             model_dir (str): Local directory containing model files
-            metadata (CloudStoredModelMetadata): Metadata object with job details
+            job_id (str): Job identifier
+            export_format (str): Export format (adapter, merged, etc.)
 
         Returns:
             str: GCS URI where the model artifacts are stored
@@ -115,8 +102,8 @@ class CloudStorageService:
             bucket = self.storage_client.bucket(self.export_bucket)
 
             # Determine folder prefix based on export format
-            format_prefix = self._get_format_prefix(metadata.export_format)
-            prefix = f"{format_prefix}/{metadata.job_id}"
+            format_prefix = self._get_format_prefix(export_format)
+            prefix = f"{format_prefix}/{job_id}"
 
             # Upload all files in the model directory
             for root, dirs, files in os.walk(model_dir):
@@ -126,24 +113,11 @@ class CloudStorageService:
                     blob = bucket.blob(f"{prefix}/{rel}")
                     blob.upload_from_filename(src)
 
-            meta_dict = {
-                "job_id": metadata.job_id,
-                "base_model_id": metadata.base_model_id,
-                "provider": metadata.provider,
-                "export_format": metadata.export_format,
-                "hf_repo_id": metadata.hf_repo_id,
-            }
-            # NOTE: Avoid using config.json because it conflicts with the model config file!
-            blob = bucket.blob(f"{prefix}/custom_config.json")
-            blob.upload_from_string(
-                json.dumps(meta_dict), content_type="application/json"
-            )
-
             # This is the location for this export request
             return f"gs://{self.export_bucket}/{prefix}/"
         except Exception as e:
             logger.error(
-                f"Error uploading model artifacts to GCS for job {metadata.job_id}: {e}",
+                f"Error uploading model artifacts to GCS for job {job_id}: {e}",
                 exc_info=True,
             )
             raise
@@ -175,11 +149,9 @@ class CloudStorageService:
             )
             raise
 
-    def download_model(
-        self, path: str, local_dir: Optional[str] = None
-    ) -> CloudStoredModelMetadata:
+    def download_model(self, path: str, local_dir: Optional[str] = None) -> str:
         """
-        Download model artifacts and metadata from cloud storage into a local dir.
+        Download model artifacts from cloud storage into a local dir.
 
         Args:
             path (str): GCS path pointing to the model / adapter, with prefix merged_models or trained_adapters
@@ -187,7 +159,7 @@ class CloudStorageService:
                                        If None, uses a temporary directory.
 
         Returns:
-            CloudStoredModelMetadata: Metadata object with job details and local path
+            str: Local directory path where model was downloaded
         """
         bucket = self.storage_client.bucket(self.export_bucket)
         # Extract prefix from path like "gs://bucket-name/prefix/job_id/"
@@ -200,45 +172,22 @@ class CloudStorageService:
             if path_parts[-1] == ""
             else "/".join(path_parts[1:])
         )
-        model_blob = bucket.blob(f"{prefix}/custom_config.json")
-        if model_blob.exists():
-            meta = json.loads(model_blob.download_as_text())
-        else:
-            logging.error(
-                f"Model config expected at {prefix}/custom_config.json but not found"
-            )
-            raise FileNotFoundError(
-                f"Model config not found for job at location {path}"
-            )
+
+        # Extract job_id from prefix (e.g., "trained_adapters/job_123" -> "job_123")
+        job_id = prefix.split("/")[-1]
 
         # prepare local directory
-        if not local_dir:
-            local_dir = f"/tmp/inference_{meta.get('job_id', 'job_without_id')}"
+        local_dir = local_dir or f"/tmp/inference_{job_id}"
         os.makedirs(local_dir, exist_ok=True)
 
         # download all artifacts
         for blob in bucket.list_blobs(prefix=prefix):
             rel = blob.name[len(prefix) + 1 :]
-            if rel == "custom_config.json":
-                continue
             dst = os.path.join(local_dir, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             blob.download_to_filename(dst)
 
-        # build metadata object
-        metadata = CloudStoredModelMetadata(
-            job_id=meta.get("job_id"),
-            base_model_id=meta.get("base_model_id"),
-            gcs_prefix=prefix,
-            provider=meta.get(
-                "provider", "huggingface"
-            ),  # Default to huggingface for backward compatibility
-            local_dir=local_dir,
-            hf_repo_id=meta.get("hf_repo_id"),
-            export_format=meta.get("export_format"),
-        )
-
-        return metadata
+        return local_dir
 
     def download_processed_dataset(
         self, processed_dataset_id: str
@@ -351,7 +300,7 @@ class CloudStorageService:
             "adapter": "trained_adapters",
             "merged": "merged_models",
             "gguf": "gguf_models",
-            "full": "full_models",
+            "full": "trained_adapters",
         }
         return format_mapping.get(
             export_format, "adapters"
@@ -384,14 +333,22 @@ class ModelStorageStrategy(ABC):
 
     @abstractmethod
     def save_model(
-        self, local_path: str, metadata: CloudStoredModelMetadata
+        self,
+        local_path: str,
+        job_id: str,
+        base_model_id: str,
+        export_format: str,
+        provider: str = "gcs",
     ) -> ModelArtifact:
         """
         Upload model artifacts from local path to storage backend.
 
         Args:
             local_path: Local directory containing saved model files
-            metadata: Dictionary containing job_id, base_model_id, and storage-specific config
+            job_id: Training job ID
+            base_model_id: Base model identifier
+            export_format: Format of the exported model
+            provider: Storage provider
 
         Returns:
             ModelArtifact: Artifact reference with paths and metadata
@@ -447,30 +404,40 @@ class GCSStorageStrategy(ModelStorageStrategy):
         self.storage_service: CloudStorageService = storage_service
 
     def save_model(
-        self, local_path: str, metadata: CloudStoredModelMetadata
+        self,
+        local_path: str,
+        job_id: str,
+        base_model_id: str,
+        export_format: str,
+        provider: str = "huggingface",
     ) -> ModelArtifact:
         """
         Upload model artifacts from local path to GCS.
 
         Args:
             local_path: Local directory containing saved model files
-            metadata: Must contain job_id, base_model_id, and optional provider field
+            job_id: Job identifier
+            base_model_id: Base model identifier
+            export_format: Export format (adapter, merged, etc.)
+            provider: Training provider (huggingface, unsloth)
 
         Returns:
             ModelArtifact: Reference to the uploaded model with GCS paths
         """
         # Upload to GCS (model is already saved locally by utils.py)
-        remote_path = self.storage_service.upload_model(local_path, metadata)
+        remote_path = self.storage_service.upload_model(
+            local_path, job_id, export_format
+        )
 
         return ModelArtifact(
-            base_model_id=metadata.base_model_id,
-            job_id=metadata.job_id,
+            base_model_id=base_model_id,
+            job_id=job_id,
             local_path=local_path,
             remote_path=remote_path,
-            provider=metadata.provider,
+            provider=provider,
             metadata={
-                "export_format": metadata.export_format,
-                "gcs_prefix": metadata.gcs_prefix,
+                "export_format": export_format,
+                "gcs_path": remote_path,
             },
         )
 
@@ -489,15 +456,20 @@ class GCSStorageStrategy(ModelStorageStrategy):
 
     def load_model_info(self, adapter_path: str) -> ModelArtifact:
         """Load model from GCS"""
-        meta = self.storage_service.download_model(adapter_path)
+        local_path = self.storage_service.download_model(adapter_path)
+
+        # Extract job_id from path for ModelArtifact
+        path_parts = adapter_path.replace("gs://", "").split("/")
+        prefix = "/".join(path_parts[1:]) if len(path_parts) > 1 else ""
+        job_id = prefix.split("/")[-1] if "/" in prefix else prefix
 
         return ModelArtifact(
-            base_model_id=meta.base_model_id,
-            job_id=meta.job_id,
-            local_path=meta.local_dir or "",
-            remote_path=f"gs://{self.storage_service.export_bucket}/{meta.gcs_prefix}/",
-            provider=meta.provider,
-            metadata={"gcs_prefix": meta.gcs_prefix},
+            base_model_id="",  # Not needed - inference client provides this via base_model_id parameter
+            job_id=job_id,
+            local_path=local_path,
+            remote_path=adapter_path,
+            provider="huggingface",  # Will be inferred from base_model_id in inference logic
+            metadata={"gcs_path": adapter_path},
         )
 
     def cleanup(self, artifact: ModelArtifact) -> None:
@@ -521,13 +493,18 @@ class HuggingFaceHubStrategy(ModelStorageStrategy):
         pass
 
     def save_model(
-        self, local_path: str, metadata: CloudStoredModelMetadata
+        self,
+        local_path: str,
+        job_id: str,
+        base_model_id: str,
+        export_format: str,
+        hf_repo_id: str,
+        provider: str = "huggingface",
     ) -> ModelArtifact:
         """
         Upload all files in local directory to HuggingFace Hub repository.
         Much more efficient than loading and re-pushing models.
         """
-        hf_repo_id = metadata.hf_repo_id
         logging.info(f"Uploading folder {local_path} to HuggingFace Hub: {hf_repo_id}")
 
         try:
@@ -549,11 +526,11 @@ class HuggingFaceHubStrategy(ModelStorageStrategy):
             raise
 
         return ModelArtifact(
-            base_model_id=metadata.base_model_id,
-            job_id=metadata.job_id,
+            base_model_id=base_model_id,
+            job_id=job_id,
             local_path=local_path,
             remote_path=hf_repo_id,
-            provider=metadata.provider,
+            provider=provider,
             metadata={"hf_repo_id": hf_repo_id},
         )
 

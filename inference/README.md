@@ -55,6 +55,8 @@ Single inference request. The service automatically detects storage type from th
 - **`"merged"`**: Fully merged model with adapter weights integrated
 - **`"base"`**: Base model without any fine-tuning
 
+> IMPORTANT! Full fine tuned models will be treated as adapters because they will never have an adapter. They also use the exact same code to load and save.
+
 **Response:**
 
 ```json

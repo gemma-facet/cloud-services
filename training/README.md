@@ -221,6 +221,8 @@ This is used in:
 - `export/schema.py`
 - `jobs/export-job/utils.py`
 
+> IMPORTANT! If the model is a full fine tuned model, we reuse the `artifacts.raw.adapter` field because a FFT model will NEVER have an adapter. This avoid replicating all the logic with storage + export.
+
 ## Job Lifecycle
 
 1. **Submit** → Job queued in Firestore
