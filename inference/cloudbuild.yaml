@@ -28,7 +28,7 @@ steps:
       - "--gpu=1"
       - "--port=8080"
       - "--allow-unauthenticated"
-      - "--max-instances=10"
+      - "--max-instances=3"
       - "--concurrency=1"
       - "--no-gpu-zonal-redundancy"
       - "--timeout=3600"
