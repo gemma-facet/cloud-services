@@ -271,6 +271,9 @@ class CloudStorageService:
         train_table = pq.read_table(io.BytesIO(train_data_bytes))
         train_dataset = Dataset(train_table)
 
+        # Convert HuggingFace dataset format images to PIL images
+        train_dataset = self._convert_hf_images_to_pil(train_dataset)
+
         # Download eval dataset if exists
         eval_dataset = None
         if eval_split:
@@ -281,6 +284,9 @@ class CloudStorageService:
                 eval_data_bytes = eval_blob.download_as_bytes()
                 eval_table = pq.read_table(io.BytesIO(eval_data_bytes))
                 eval_dataset = Dataset(eval_table)
+
+                # Convert HuggingFace dataset format images to PIL images
+                eval_dataset = self._convert_hf_images_to_pil(eval_dataset)
             else:
                 logger.warning(
                     f"Eval dataset file not found for {processed_dataset_id}, using train only"
@@ -291,6 +297,57 @@ class CloudStorageService:
             )
 
         return train_dataset, eval_dataset
+
+    def _convert_hf_images_to_pil(self, dataset: Dataset) -> Dataset:
+        """
+        Convert HuggingFace dataset format images ({"bytes": ..., "path": null}) to PIL Images.
+
+        This ensures that all images are consistently PIL Image objects regardless of how they
+        were originally stored in the dataset. This conversion happens during loading so that
+        all downstream processing (formatting, collating, etc.) can assume PIL Images.
+
+        Args:
+            dataset: HuggingFace Dataset that may contain serialized images
+
+        Returns:
+            Dataset: Dataset with images converted to PIL Image objects
+        """
+        from PIL import Image
+
+        def convert_images_in_example(example):
+            """Convert any HF format images to PIL in a single example."""
+
+            def convert_image_recursive(obj):
+                if isinstance(obj, dict):
+                    # Handle HuggingFace image format: {"bytes": ..., "path": null}
+                    if "bytes" in obj and obj.get("path") is None:
+                        try:
+                            image_bytes = obj["bytes"]
+                            if isinstance(image_bytes, (bytes, bytearray)):
+                                pil_image = Image.open(io.BytesIO(image_bytes))
+                                return pil_image.convert("RGB")
+                        except Exception as e:
+                            logger.warning(f"Failed to convert HF image format: {e}")
+                            return obj  # Return original if conversion fails
+                    else:
+                        # Recursively process dict values
+                        return {k: convert_image_recursive(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    # Recursively process list items
+                    return [convert_image_recursive(item) for item in obj]
+
+                return obj  # Return unchanged for non-dict/list types
+
+            return convert_image_recursive(example)
+
+        try:
+            # Apply conversion to all examples in the dataset
+            converted_dataset = dataset.map(convert_images_in_example)
+            logger.info("Converted HuggingFace dataset format images to PIL Images")
+            return converted_dataset
+        except Exception as e:
+            logger.warning(f"Failed to convert HF images in dataset: {e}")
+            return dataset  # Return original dataset if conversion fails
 
     def _get_format_prefix(self, export_format: Optional[str]) -> str:
         """
