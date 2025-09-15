@@ -54,6 +54,8 @@ build: check ## Build all container images with Cloud Build
 	@cd ../inference && gcloud builds submit --config cloudbuild.yaml --project=$(PROJECT_ID) --ignore-file=.gcloudignore
 	@echo "$(YELLOW)Building training job...$(NC)"
 	@cd ../jobs/training-job && gcloud builds submit --config cloudbuild.yaml --project=$(PROJECT_ID) --ignore-file=.gcloudignore
+	@echo "$(YELLOW)Building export job...$(NC)"
+	@cd ../export-job && gcloud builds submit --config cloudbuild.yaml --project=$(PROJECT_ID) --ignore-file=.gcloudignore
 	@echo "$(GREEN)✓ All containers built successfully$(NC)"
 
 # Terraform operations
