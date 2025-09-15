@@ -91,6 +91,8 @@ All hyperparameters are grouped under the `hyperparameters` section of the confi
 
 ### Export
 
+> CAUTION: We highly recommend choosing adapter export here and using the export service instead to do merging / gguf unless you are very sure of what you want as the final model format. The export service has more customization that training does not support.
+
 All export options are grouped under the `export_config` section of the config. Example fields:
 
 ```json

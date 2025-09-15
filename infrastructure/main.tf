@@ -43,7 +43,8 @@ module "storage" {
   data_bucket_name   = "${var.project_id}-datasets"
   export_bucket_name = "${var.project_id}-models"
   config_bucket_name = "${var.project_id}-configs"
-  
+  files_bucket_name  = "${var.project_id}-files"
+
   depends_on = [module.core]
 }
 
@@ -71,12 +72,13 @@ module "compute" {
   data_bucket_name           = module.storage.data_bucket_name
   export_bucket_name         = module.storage.export_bucket_name
   config_bucket_name         = module.storage.config_bucket_name
+  files_bucket_name          = module.storage.files_bucket_name
   training_image_tag         = "latest"
   preprocessing_image_tag    = "latest"
   inference_image_tag        = "latest"
-  preprocessing_max_instances = 5
-  training_max_instances      = 3
-  inference_max_instances     = 2
+  preprocessing_max_instances = 10
+  training_max_instances      = 10
+  inference_max_instances     = 3
   
   depends_on = [module.core, module.storage]
 }

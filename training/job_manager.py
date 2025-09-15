@@ -3,9 +3,8 @@ import math
 from enum import Enum
 from typing import Optional, Dict, Any
 from google.cloud import firestore
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from schema import EvaluationMetrics
+from schema import JobSchema, JobStatusResponse
 
 
 class JobStatus(Enum):
@@ -16,26 +15,6 @@ class JobStatus(Enum):
     TRAINING = "training"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-@dataclass
-class JobMetadata:
-    """Job metadata structure"""
-
-    job_id: str
-    status: JobStatus
-    created_at: datetime
-    updated_at: datetime
-    processed_dataset_id: str
-    base_model_id: str
-    job_name: str
-    modality: Optional[str] = "text"
-    adapter_path: Optional[str] = None
-    wandb_url: Optional[str] = None
-    metrics: Optional[EvaluationMetrics] = None
-    error: Optional[str] = None
-    gguf_path: Optional[str] = None
-    user_id: Optional[str] = None
 
 
 class JobStateManager:
@@ -56,7 +35,7 @@ class JobStateManager:
         self.collection = self.db.collection(collection_name)
         self.logger = logging.getLogger(__name__)
 
-    def get_job(self, job_id: str) -> Optional[JobMetadata]:
+    def get_job(self, job_id: str) -> Optional[JobSchema]:
         """
         Retrieve job metadata by ID.
 
@@ -64,7 +43,7 @@ class JobStateManager:
             job_id: Job identifier
 
         Returns:
-            JobMetadata or None if job not found
+            JobSchema or None if job not found
         """
         try:
             doc = self.collection.document(job_id).get()
@@ -73,22 +52,12 @@ class JobStateManager:
             data = doc.to_dict()
             if not data:
                 return None
-            return JobMetadata(
-                job_id=data["job_id"],
-                status=JobStatus(data["status"]),
-                created_at=data["created_at"],
-                updated_at=data["updated_at"],
-                processed_dataset_id=data["processed_dataset_id"],
-                base_model_id=data["base_model_id"],
-                job_name=data["job_name"],
-                modality=data.get("modality", "text"),
-                adapter_path=data.get("adapter_path"),
-                wandb_url=data.get("wandb_url"),
-                metrics=data.get("metrics"),
-                error=data.get("error"),
-                gguf_path=data.get("gguf_path"),
-                user_id=data.get("user_id"),
-            )
+
+            # Pad missing fields for backward compatibility
+            if "artifacts" not in data:
+                data["artifacts"] = {}
+
+            return JobSchema(**data)
         except Exception as e:
             self.logger.error(f"Failed to get job {job_id}: {e}")
             raise
@@ -108,27 +77,25 @@ class JobStateManager:
             return None
 
         # Metrics contain numerical values and they might be nan but JSON response does not support these values
-        metrics = self._sanitize_metrics(job.metrics) if job.metrics else None
+        metrics = (
+            self._sanitize_metrics(job.metrics.model_dump()) if job.metrics else None
+        )
 
-        status_dict = {
-            "job_id": job.job_id,
-            "job_name": job.job_name,
-            "status": job.status.value,
-            "modality": job.modality,
-            "created_at": job.created_at.isoformat(),
-            "updated_at": job.updated_at.isoformat(),
-            "processed_dataset_id": job.processed_dataset_id,
-            "base_model_id": job.base_model_id,
-            "adapter_path": job.adapter_path,
-            "wandb_url": job.wandb_url,
-            "metrics": metrics,
-            "error": job.error,
-            "gguf_path": job.gguf_path,
-        }
-        return status_dict
+        response = JobStatusResponse(
+            job_name=job.job_name,
+            status=job.status,
+            modality=job.modality,
+            wandb_url=job.wandb_url,
+            processed_dataset_id=job.processed_dataset_id,
+            base_model_id=job.base_model_id,
+            artifacts=job.artifacts,
+            metrics=metrics,
+            error=job.error,
+        )
+        return response.model_dump(exclude_none=True)
 
     def ensure_job_document_exists(
-        self, job_id: str, job_metadata: Optional[JobMetadata] = None
+        self, job_id: str, job_metadata: Optional[JobSchema] = None
     ):
         """
         Ensure a job document exists in Firestore. If not, create it with the provided metadata or minimal info.
@@ -138,32 +105,17 @@ class JobStateManager:
         if not doc.exists:
             if job_metadata is None:
                 # Create with minimal info
-                job_metadata = JobMetadata(
+                job_metadata = JobSchema(
                     job_id=job_id,
                     job_name="unnamed job",
-                    status=JobStatus.QUEUED,
+                    status="queued",
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),
                     processed_dataset_id="",
                     base_model_id="",
+                    user_id="",
                 )
-            doc_ref.set(
-                {
-                    "job_id": job_metadata.job_id,
-                    "job_name": job_metadata.job_name,
-                    "status": job_metadata.status.value,
-                    "created_at": job_metadata.created_at,
-                    "updated_at": job_metadata.updated_at,
-                    "processed_dataset_id": job_metadata.processed_dataset_id,
-                    "base_model_id": job_metadata.base_model_id,
-                    "modality": job_metadata.modality,
-                    "adapter_path": job_metadata.adapter_path,
-                    "wandb_url": job_metadata.wandb_url,
-                    "error": job_metadata.error,
-                    "gguf_path": job_metadata.gguf_path,
-                    "user_id": job_metadata.user_id,
-                }
-            )
+            doc_ref.set(job_metadata.model_dump(exclude_none=True))
 
     def list_jobs(self) -> list:
         """

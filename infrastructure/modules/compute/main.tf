@@ -40,6 +40,11 @@ variable "config_bucket_name" {
   type        = string
 }
 
+variable "files_bucket_name" {
+  description = "Files bucket name"
+  type        = string
+}
+
 variable "training_image_tag" {
   description = "Training service image tag"
   type        = string
@@ -61,19 +66,19 @@ variable "inference_image_tag" {
 variable "preprocessing_max_instances" {
   description = "Maximum instances for preprocessing service"
   type        = number
-  default     = 5
+  default     = 10
 }
 
 variable "training_max_instances" {
   description = "Maximum instances for training service"
   type        = number
-  default     = 3
+  default     = 10
 }
 
 variable "inference_max_instances" {
   description = "Maximum instances for inference service"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 # Preprocessing Service
@@ -139,6 +144,8 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
         failure_threshold = 3
       }
     }
+
+    max_instance_request_concurrency = 30
   }
 }
 
@@ -326,6 +333,74 @@ resource "google_cloud_run_v2_job" "training_job" {
         env {
           name  = "GCS_CONFIG_BUCKET_NAME"
           value = var.config_bucket_name
+        }
+
+        env {
+          name  = "GCS_EXPORT_FILES_BUCKET_NAME"
+          value = var.files_bucket_name
+        }
+
+        env {
+          name  = "PROJECT_ID"
+          value = var.project_id
+        }
+      }
+
+      node_selector {
+        accelerator = "nvidia-l4"
+      }
+
+      gpu_zonal_redundancy_disabled = "true"
+      
+      max_retries = 0
+      timeout     = "3600s"
+    }
+  }
+}
+
+# Export job
+resource "google_cloud_run_v2_job" "export_job" {
+  name     = "export-job"
+  location = var.region
+  launch_stage = "BETA"
+  
+  template {
+    labels = merge(var.labels, {
+      job-type = "export"
+    })
+
+    template {
+      service_account = var.service_account_email
+      
+      containers {
+        image = "${var.artifact_registry_repo_url}/export-job:latest"
+        
+        resources {
+          limits = {
+            cpu              = "8"
+            memory           = "32Gi"
+            "nvidia.com/gpu" = "1"
+          }
+        }
+
+        env {
+          name  = "GCS_DATA_BUCKET_NAME"
+          value = var.data_bucket_name
+        }
+        
+        env {
+          name  = "GCS_EXPORT_BUCKET_NAME"
+          value = var.export_bucket_name
+        }
+
+        env {
+          name  = "GCS_CONFIG_BUCKET_NAME"
+          value = var.config_bucket_name
+        }
+
+        env {
+          name = "GCS_EXPORT_FILES_BUCKET_NAME"
+          value = var.files_bucket_name
         }
 
         env {

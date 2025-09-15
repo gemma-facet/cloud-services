@@ -18,6 +18,16 @@ output "export_bucket_url" {
   value       = google_storage_bucket.export_bucket.url
 }
 
+output "files_bucket_name" {
+  description = "Name of the files bucket"
+  value       = google_storage_bucket.files_bucket.name
+}
+
+output "files_bucket_url" {
+  description = "URL of the files bucket"
+  value       = google_storage_bucket.files_bucket.url
+}
+
 output "config_bucket_name" {
   description = "Name of the config bucket"
   value       = google_storage_bucket.config_bucket.name

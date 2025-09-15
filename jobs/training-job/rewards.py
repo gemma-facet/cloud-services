@@ -99,20 +99,20 @@ def extract_answer_from_dataset(text: str) -> str:
     return text.strip()
 
 
-def expression_accuracy_reward(
-    completions, solution, **kwargs
-) -> List[Optional[float]]:
+def expression_accuracy_reward(completions, **kwargs) -> List[Optional[float]]:
     """
     Verifies mathematical expressions against a solution.
     Requires the math-verify package.
     You should ensure that the model outputs valid LaTeX expressions, otherwise it defaults to simple text comparison.
 
-    NOTE: This also requires a "solution" column in the dataset, otherwise it will just fail
+    NOTE: This also requires a "solution" or "answer" column in the dataset, otherwise it will just fail
     If you want a more flexible option, just use the text_similarity_reward with {{sample.solution_column_name}} as template
     """
+    solution = kwargs.get("solution", kwargs.get("answer", None))
     if not solution:
         logging.warning("No solution provided for expression accuracy reward.")
         return [0.0] * len(completions)
+
     try:
         from math_verify import LatexExtractionConfig, parse, verify
         from latex2sympy2_extended import NormalizationConfig
@@ -165,12 +165,13 @@ def expression_accuracy_reward(
 
 
 def numerical_accuracy_reward(
-    completions, solution, answer_tag="answer", **kwargs
+    completions, answer_tag="answer", **kwargs
 ) -> List[Optional[float]]:
     """
     Verifies a numerical answer by extracting it from the XML tags and extracting the ground truth from the dataset.
-    NOTE: This is a little bit brittle especially it requires a "solution" column otherwise it will just fail
+    NOTE: This is a little bit brittle especially it requires a "solution or answer" column otherwise it will just fail
     """
+    solution = kwargs.get("solution", kwargs.get("answer", None))
     if not solution:
         logging.warning("No solution provided for numerical accuracy reward.")
         return [0.0] * len(completions)

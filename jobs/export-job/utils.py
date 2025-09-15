@@ -58,8 +58,8 @@ class ExportUtils:
         self.export_doc = ExportSchema(**self.export_doc)
         self.job_id = self.export_doc.job_id
         self.job_ref = self.db.collection("training_jobs").document(self.job_id)
-        self.job_doc = self.job_ref.get().to_dict()
-        self.job_doc = JobSchema(**self.job_doc)
+        self.raw_job_doc = self.job_ref.get().to_dict()
+        self.job_doc = JobSchema(**self.raw_job_doc)
         self.hf_token = hf_token
 
     def _get_backend_provider(
@@ -541,12 +541,15 @@ class ExportUtils:
             self._update_status("completed", "Adapter already present in the database.")
             return
 
-        if not self.job_doc.adapter_path:
+        # NOTE: This is made backward compatible with old jobs that may not have adapter_path in raw artifacts
+        adapter_path = self.job_doc.artifacts.raw.adapter or self.raw_job_doc.get(
+            "adapter_path"
+        )
+        if not adapter_path:
             raise ValueError("Adapter path not found in the database.")
 
         local_adapter_path = None
         try:
-            adapter_path = self.job_doc.adapter_path
             self._update_status("running", "Downloading adapter from GCS")
             logger.info(f"Downloading adapter from {adapter_path}")
             local_adapter_path = gcs_storage._download_directory(adapter_path)
@@ -635,7 +638,11 @@ class ExportUtils:
                     )
             else:
                 # Create merged model from adapter
-                if not self.job_doc.adapter_path or not self.job_doc.base_model_id:
+                adapter_path = (
+                    self.job_doc.artifacts.raw.adapter
+                    or self.raw_job_doc.get("adapter_path")
+                )
+                if not adapter_path or not self.job_doc.base_model_id:
                     raise ValueError(
                         "adapter_path and base_model_id required to create merged model"
                     )
@@ -643,9 +650,7 @@ class ExportUtils:
                 logger.info("Creating merged model from adapter")
                 # Download adapter first
                 self._update_status("running", "Downloading adapter from GCS")
-                local_adapter_path = gcs_storage._download_directory(
-                    self.job_doc.adapter_path
-                )
+                local_adapter_path = gcs_storage._download_directory(adapter_path)
 
                 self._update_status("running", "Merging model with adapter")
                 local_merged_path, model, tokenizer = self._merge_model(
@@ -773,7 +778,11 @@ class ExportUtils:
                 )
             else:
                 # Create merged model from adapter first
-                if not self.job_doc.adapter_path or not self.job_doc.base_model_id:
+                adapter_path = (
+                    self.job_doc.artifacts.raw.adapter
+                    or self.raw_job_doc.get("adapter_path")
+                )
+                if not adapter_path or not self.job_doc.base_model_id:
                     raise ValueError(
                         "adapter_path and base_model_id required to create merged model"
                     )
@@ -781,9 +790,7 @@ class ExportUtils:
                 logger.info("Creating merged model from adapter for GGUF conversion")
                 # Download adapter first
                 self._update_status("running", "Downloading adapter from GCS")
-                local_adapter_path = gcs_storage._download_directory(
-                    self.job_doc.adapter_path
-                )
+                local_adapter_path = gcs_storage._download_directory(adapter_path)
 
                 self._update_status("running", "Merging model with adapter")
                 # Merge model locally

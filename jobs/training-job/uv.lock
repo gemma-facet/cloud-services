@@ -440,7 +440,7 @@ dependencies = [
 requires-dist = [
     { name = "accelerate", specifier = ">=1.4.0" },
     { name = "bitsandbytes", specifier = "==0.47.0" },
-    { name = "datasets", specifier = ">=3.4.1" },
+    { name = "datasets", specifier = ">=3.6.0,<4.0.0" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "google-cloud-firestore", specifier = ">=2.11.0" },
     { name = "google-cloud-storage", specifier = "==2.10.0" },

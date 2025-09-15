@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Literal, Optional, List, Union
+from datetime import datetime
 
 
 class StringCheckRewardConfig(BaseModel):
@@ -290,16 +291,55 @@ class EvaluationMetrics(BaseModel):
     eval_runtime: Optional[float] = None
 
 
+class JobArtifactsFiles(BaseModel):
+    adapter: Optional[str] = None
+    merged: Optional[str] = None
+    gguf: Optional[str] = None
+
+
+class JobArtifactsRaw(BaseModel):
+    adapter: Optional[str] = None
+    merged: Optional[str] = None
+
+
+class JobArtifactsHF(BaseModel):
+    adapter: Optional[str] = None
+    merged: Optional[str] = None
+    gguf: Optional[str] = None
+
+
+class JobArtifacts(BaseModel):
+    file: JobArtifactsFiles = Field(default_factory=JobArtifactsFiles)
+    raw: JobArtifactsRaw = Field(default_factory=JobArtifactsRaw)
+    hf: JobArtifactsHF = Field(default_factory=JobArtifactsHF)
+
+
+class JobSchema(BaseModel):
+    job_id: str
+    job_name: str
+    user_id: str
+    base_model_id: str
+    processed_dataset_id: str
+    modality: Optional[Literal["text", "vision"]] = "text"
+    artifacts: JobArtifacts = Field(default_factory=JobArtifacts)
+    status: Literal[
+        "queued", "preparing", "training", "completed", "failed", "unknown"
+    ] = "unknown"
+    created_at: datetime
+    updated_at: datetime
+    wandb_url: Optional[str] = None
+    metrics: Optional[EvaluationMetrics] = None
+    error: Optional[str] = None
+
+
 class JobStatusResponse(BaseModel):
     job_name: str
     status: Literal["queued", "preparing", "training", "completed", "failed"]
     modality: Optional[Literal["text", "vision"]] = "text"
     wandb_url: Optional[str] = None
     processed_dataset_id: Optional[str] = None
-    adapter_path: Optional[str] = None
     base_model_id: Optional[str] = None
-    # Path to GGUF file if it was exported alongside the main model
-    gguf_path: Optional[str] = None
+    artifacts: Optional[JobArtifacts] = None
     # Evaluation metrics recorded after training
     metrics: Optional[EvaluationMetrics] = None
     error: Optional[str] = None

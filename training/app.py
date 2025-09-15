@@ -18,7 +18,7 @@ from schema import (
 )
 import uvicorn
 import hashlib
-from job_manager import JobStateManager, JobMetadata, JobStatus
+from job_manager import JobStateManager, JobSchema, JobStatus
 
 app = FastAPI(
     title="Gemma Training Service",
@@ -174,9 +174,9 @@ async def start_training(
         )
 
     # Immediately create job record in Firestore
-    job_metadata = JobMetadata(
+    job_schema = JobSchema(
         job_id=job_id,
-        status=JobStatus.QUEUED,
+        status=JobStatus.QUEUED.value,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         processed_dataset_id=request.processed_dataset_id,
@@ -185,7 +185,7 @@ async def start_training(
         modality=request.training_config.modality,
         user_id=current_user_id,
     )
-    job_manager.ensure_job_document_exists(job_id, job_metadata)
+    job_manager.ensure_job_document_exists(job_id, job_schema)
 
     # Upload config to GCS
     try:
