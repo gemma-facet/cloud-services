@@ -30,12 +30,9 @@ steps:
         "--allow-unauthenticated",
         "--memory=8Gi",
         "--cpu=2",
-        "--set-env-vars=STORAGE_TYPE=gcs,GCS_DATA_BUCKET_NAME=${_GCS_DATA_BUCKET_NAME}",
+        "--set-env-vars=STORAGE_TYPE=gcs,GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets",
         "--set-env-vars=PROJECT_ID=$PROJECT_ID",
       ]
-
-substitutions:
-  _GCS_DATA_BUCKET_NAME: "gemma-facet-datasets"
 
 options:
   machineType: "E2_HIGHCPU_8"
