@@ -5,7 +5,7 @@ description = "Preprocessing service"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "datasets>=4.0.0",
+    "datasets>=3.6.0,<4.0.0",
     "fastapi>=0.104.1",
     "firebase-admin>=6.0.0",
     "google-cloud-storage==2.10.0",
