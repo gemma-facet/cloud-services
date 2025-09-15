@@ -111,7 +111,7 @@ Get dataset information.
           // For vision datasets:
           {
             "messages": [
-              { "role": "system", "content": "Describe the images." },
+              { "role": "system", "content": [{ "type": "text", "text": "Describe the images." }] },
               {
                 "role": "user",
                 "content": [
@@ -120,7 +120,7 @@ Get dataset information.
                   { "type": "image", "image": "data:image/png;base64,..." }
                 ]
               },
-              { "role": "assistant", "content": "The first image shows..." }
+              { "role": "assistant", "content": [{ "type": "text", "text": "The first image shows..." }] }
             ]
           }
           // up to five samples per split...
@@ -132,9 +132,13 @@ Get dataset information.
 }
 ```
 
-> NOTE: Modality is returned when you fetch info for a dataset and it is determined by the service and saved to metadata during processing. It is NOT set by the user.
+### Note
 
-> Samples dict is structured according to the ChatML format and the specific type of the dataset (as well as modality). See the [Conversion Examples](#conversion-examples) section for details.
+- Modality is returned when you fetch info for a dataset and it is determined by the service and saved to metadata during processing. It is NOT set by the user.
+
+- Samples dict is structured according to the ChatML format and the specific type of the dataset (as well as modality). See the [Conversion Examples](#conversion-examples) section for details.
+
+- **IMPORTANT**: For vision datasets, we use the old format `{"type": "image", "image": "data:image/png;base64,..."}` in the sample response because this is easier for the frontend to parse. The conversion is handled by the backend.
 
 ### DELETE `/datasets/{processed_dataset_id}`
 
@@ -178,6 +182,10 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
 
 > We don't currently support implicitly prompt in preferences which is recommended for Reward Modelling, will do that soon!
 
+The following examples illustrate each row of the processed dataset after conversion. This refers to `dataset[i]` which is `Dict[str, Any]`, but some trainer will index like `dataset["images"]` which is `List[List[PIL.Image]]` for vision datasets.
+
+> IMPORTANT!!! We have now migrated to the new TRL vision dataset format here. Images are stored in a separate `images` field as a list of PIL Image objects. The `content` field in the user message contains placeholders `{"type": "image"}`. This ensures better compatibility with native collators. In the past versions, you will see this as `{"type": "image", "data": "<PIL.Image>"}` instead. It is still backward compatible as for now.
+
 ### Language Modeling
 
 ```json
@@ -191,15 +199,16 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
       "role": "user",
       "content": [
         { "type": "text", "text": "Compare these images." },
-        { "type": "image", "image": "<base64 or image object>" },
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "image" },
+        { "type": "image" }
       ]
     },
     {
       "role": "assistant",
       "content": [{ "type": "text", "text": "The first image shows..." }]
     }
-  ]
+  ],
+  "images": ["<PIL.Image object>", "<PIL.Image object>"]
 }
 ```
 
@@ -212,18 +221,17 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
   "prompt": [
     {
       "role": "system",
-      "content": [{ "type": "text", "content": "REASONING_PROMPT" }]
+      "content": [{ "type": "text", "text": "REASONING_PROMPT" }]
     },
     {
       "role": "user",
       "content": [
-        { "type": "text", "content": "What color is the sky?" },
-        // This differs to some documentation because we extract this image
-        // and apply processor during training not during preprocessing
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "text", "text": "What color is the sky?" },
+        { "type": "image" }
       ]
     }
   ],
+  "images": ["<PIL.Image object>"],
   "answer": "10",
   "reasoning": "<think>Some math logic</think>",
   "any_other_additional_fields": "additional_info"
@@ -238,23 +246,24 @@ This service can ingest standard tabular formats (JSON, JSONL, CSV, Parquet, Exc
     {
       "role": "user",
       "content": [
-        { "type": "text", "content": "What color is the sky?" },
-        { "type": "image", "image": "<base64 or image object>" }
+        { "type": "text", "text": "What color is the sky?" },
+        { "type": "image" }
       ]
     }
   ],
   "chosen": [
     {
       "role": "assistant",
-      "content": [{ "type": "text", "content": "It is blue." }]
+      "content": [{ "type": "text", "text": "It is blue." }]
     }
   ],
   "rejected": [
     {
       "role": "assistant",
-      "content": [{ "type": "text", "content": "It is green." }]
+      "content": [{ "type": "text", "text": "It is green." }]
     }
-  ]
+  ],
+  "images": ["<PIL.Image object>"]
 }
 ```
 
