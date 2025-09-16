@@ -1,7 +1,5 @@
 import os
-import json
-from typing import Optional, Dict, Any, Tuple
-from dataclasses import dataclass
+from typing import Optional, Tuple
 from google.cloud import storage, firestore
 from datasets import Dataset
 import logging
@@ -9,7 +7,7 @@ from abc import ABC, abstractmethod
 import shutil
 import io
 import pyarrow.parquet as pq
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -372,18 +370,6 @@ class CloudStorageService:
         )  # Default to adapters for backwards compatibility
 
 
-@dataclass
-class ModelArtifact:
-    """Unified representation of model artifacts regardless of storage backend"""
-
-    base_model_id: str
-    job_id: str
-    local_path: str
-    remote_path: str
-    provider: str = "huggingface"  # Training provider: "unsloth" or "huggingface"
-    metadata: Optional[Dict[str, Any]] = None
-
-
 class ModelStorageStrategy(ABC):
     """
     Abstract base strategy for model storage operations.
@@ -403,8 +389,9 @@ class ModelStorageStrategy(ABC):
         job_id: str,
         base_model_id: str,
         export_format: str,
-        provider: str = "gcs",
-    ) -> ModelArtifact:
+        provider: str,
+        hf_repo_id: Optional[str] = None,
+    ) -> str:
         """
         Upload model artifacts from local path to storage backend.
 
@@ -414,9 +401,10 @@ class ModelStorageStrategy(ABC):
             base_model_id: Base model identifier
             export_format: Format of the exported model
             provider: Storage provider
+            hf_repo_id: Hugging Face repository ID (optional)
 
         Returns:
-            ModelArtifact: Artifact reference with paths and metadata
+            str: The remote path of the saved model.
         """
         pass
 
@@ -435,7 +423,7 @@ class ModelStorageStrategy(ABC):
         pass
 
     @abstractmethod
-    def load_model_info(self, artifact_id: str) -> ModelArtifact:
+    def load_model_info(self, artifact_id: str) -> str:
         """
         Load model metadata and prepare for inference.
 
@@ -446,12 +434,12 @@ class ModelStorageStrategy(ABC):
             artifact_id: Storage-specific identifier (job_id for GCS, repo_id for HF Hub)
 
         Returns:
-            ModelArtifact: Artifact reference with metadata for model loading
+            str: A path to be used for loading the model (local path for GCS, repo ID for HF Hub).
         """
         pass
 
     @abstractmethod
-    def cleanup(self, artifact: ModelArtifact) -> None:
+    def cleanup(self, path: str) -> None:
         """Clean up local resources"""
         pass
 
@@ -474,8 +462,9 @@ class GCSStorageStrategy(ModelStorageStrategy):
         job_id: str,
         base_model_id: str,
         export_format: str,
-        provider: str = "gcs",
-    ) -> ModelArtifact:
+        provider: str,
+        hf_repo_id: Optional[str] = None,
+    ) -> str:
         """
         Upload model artifacts from local path to GCS.
 
@@ -485,25 +474,16 @@ class GCSStorageStrategy(ModelStorageStrategy):
             base_model_id: Base model identifier
             export_format: Format of the exported model
             provider: Storage provider
+            hf_repo_id: Ignored for GCS strategy.
 
         Returns:
-            ModelArtifact: Reference to the uploaded model with GCS paths
+            str: Reference to the uploaded model with GCS paths
         """
         # Upload to GCS (model is already saved locally by utils.py)
         remote_path = self.storage_service.upload_model(
             local_path, job_id, export_format
         )
-
-        return ModelArtifact(
-            base_model_id=base_model_id,
-            job_id=job_id,
-            local_path=local_path,
-            remote_path=remote_path,
-            provider=provider,
-            metadata={
-                "export_format": export_format,
-            },
-        )
+        return remote_path
 
     def save_file(self, local_file_path: str, remote_path_or_repo_id: str) -> str:
         """
@@ -518,23 +498,14 @@ class GCSStorageStrategy(ModelStorageStrategy):
         """
         return self.storage_service.upload_file(local_file_path, remote_path_or_repo_id)
 
-    def load_model_info(self, adapter_path: str) -> ModelArtifact:
-        """Load model from GCS"""
-        meta = self.storage_service.download_model(adapter_path)
+    def load_model_info(self, adapter_path: str) -> str:
+        """Load model from GCS and return local path."""
+        return self.storage_service.download_model(adapter_path)
 
-        return ModelArtifact(
-            base_model_id="",  # Not needed - inference client provides this via base_model_id parameter
-            job_id=meta.job_id,
-            local_path=meta.local_dir or "",
-            remote_path=f"gs://{self.storage_service.export_bucket}/{meta.gcs_prefix}/",
-            provider=meta.provider,
-            metadata={"gcs_prefix": meta.gcs_prefix},
-        )
-
-    def cleanup(self, artifact: ModelArtifact) -> None:
+    def cleanup(self, path: str) -> None:
         """Clean up local GCS artifacts"""
-        if artifact.local_path and os.path.exists(artifact.local_path):
-            shutil.rmtree(artifact.local_path, ignore_errors=True)
+        if path and os.path.exists(path):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 class HuggingFaceHubStrategy(ModelStorageStrategy):
@@ -557,13 +528,16 @@ class HuggingFaceHubStrategy(ModelStorageStrategy):
         job_id: str,
         base_model_id: str,
         export_format: str,
-        hf_repo_id: str,
-        provider: str = "huggingface",
-    ) -> ModelArtifact:
+        provider: str,
+        hf_repo_id: Optional[str] = None,
+    ) -> str:
         """
         Upload all files in local directory to HuggingFace Hub repository.
         Much more efficient than loading and re-pushing models.
         """
+        if not hf_repo_id:
+            raise ValueError("hf_repo_id is required for HuggingFaceHubStrategy")
+
         logging.info(f"Uploading folder {local_path} to HuggingFace Hub: {hf_repo_id}")
 
         try:
@@ -584,14 +558,7 @@ class HuggingFaceHubStrategy(ModelStorageStrategy):
             logging.error(f"Failed to upload folder to HuggingFace Hub: {e}")
             raise
 
-        return ModelArtifact(
-            base_model_id=base_model_id,
-            job_id=job_id,
-            local_path=local_path,
-            remote_path=hf_repo_id,
-            provider=provider,
-            metadata={"hf_repo_id": hf_repo_id},
-        )
+        return hf_repo_id
 
     def save_file(self, local_file_path: str, remote_path_or_repo_id: str) -> str:
         """
@@ -631,48 +598,19 @@ class HuggingFaceHubStrategy(ModelStorageStrategy):
 
         return f"{remote_path_or_repo_id}/{file_name}"
 
-    def load_model_info(self, repo_id: str) -> ModelArtifact:
+    def load_model_info(self, repo_id: str) -> str:
         """
-        Load model info from HuggingFace Hub.
-
-        Attempts to retrieve model configuration from the HuggingFace repository
-        to determine the base model and framework used. Falls back gracefully
-        if configuration files are not available.
+        Load model info from HuggingFace Hub. For inference, this simply returns the repo_id.
 
         Args:
             repo_id: HuggingFace repository identifier (e.g., "user/model-name")
 
         Returns:
-            ModelArtifact: Model metadata for inference setup
+            str: The repository ID to be used as the model path.
         """
-        try:
-            # Try adapter config first
-            adapter_config_path = hf_hub_download(
-                repo_id=repo_id, filename="adapter_config.json"
-            )
-            with open(adapter_config_path, "r") as f:
-                adapter_config = json.load(f)
-            base_model_id = adapter_config.get("base_model_name_or_path", repo_id)
-            provider = (
-                "unsloth" if base_model_id.startswith("unsloth/") else "huggingface"
-            )
-        except Exception:
-            logging.warning(
-                f"Failed to load adapter config for {repo_id}, falling back to repo_id as model_id"
-            )
-            base_model_id = repo_id
-            provider = "huggingface"
+        return repo_id
 
-        return ModelArtifact(
-            base_model_id=base_model_id,
-            job_id=repo_id,  # Use repo_id as job_id for HF Hub
-            local_path="",  # No local path for HF Hub
-            remote_path=repo_id,
-            provider=provider,
-            metadata={"hf_repo_id": repo_id},
-        )
-
-    def cleanup(self, artifact: ModelArtifact) -> None:
+    def cleanup(self, path: str) -> None:
         """
         No local artifacts to clean up for HuggingFace Hub.
         This method is required as abstract method but does nothing

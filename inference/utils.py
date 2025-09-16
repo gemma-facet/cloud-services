@@ -34,19 +34,22 @@ def infer_storage_type_from_path(adapter_path: str) -> str:
 def infer_modality_from_messages(messages: List) -> str:
     """
     Infer the modality (text or vision) from the messages.
-    This is a simple heuristic based on the content type.
+
+    Supports both batch inference and evaluation paths:
+    - Batch inference: base64 strings in message content
+    - Evaluation: PIL Image objects in message content
 
     Args:
-        messages: List of message conversations
+        messages: List of message conversations in ChatML format
 
     Returns:
         str: Either "text" or "vision"
     """
-    for msg in messages:
-        if isinstance(msg, list):
-            for item in msg:
-                if isinstance(item.get("content"), list):
-                    for content in item["content"]:
+    for msgs in messages:
+        if isinstance(msgs, list):
+            for msg in msgs:
+                if isinstance(msg.get("content"), list):
+                    for content in msg["content"]:
                         if content.get("type") == "image":
                             return "vision"
     return "text"
@@ -58,66 +61,70 @@ def prepare_vision_inputs(
     """
     Prepare vision inputs for batch processing.
 
-    Expected structure of messages:
-    [
-        [
-            {"role": "user", "content":
-                [
-                    {"type": "image", "image": "<base64_image>"},
-                    {"type": "text", "text": "Describe the image."}
-                ]
-            },
-            {"role": "assistant", "content": "Describe the image."}
-        ],
-        ...
-    ]
+    Handles TWO scenarios with the SAME input format List[List[Dict]]:
 
-    This does two things:
-    1. Extracts images from the messages and decodes them from base64 to PIL so you can just pass them to the processor
-    2. Formats the text prompts for the processor (this prevents the need to do this in the main inference function)
+    1. Batch Inference (frontend): Images are base64 strings
+       [
+           [
+               {"role": "user", "content": [
+                   {"type": "image", "image": "<base64_string>"},
+                   {"type": "text", "text": "Describe the image."}
+               ]},
+               ...
+           ]
+       ]
+
+    2. Evaluation (GCS dataset): Images are PIL objects (converted by storage service)
+       [
+           [
+               {"role": "user", "content": [
+                   {"type": "image", "image": <PIL.Image.Image>},
+                   {"type": "text", "text": "Describe the image."}
+               ]},
+               ...
+           ]
+       ]
 
     Args:
         processor: The model processor for handling vision inputs
-        messages: List of message conversations
+        messages: List of message conversations in ChatML format
 
     Returns:
         Tuple containing:
             - images: [[Image objects], [Image objects], ...]
-            - texts: ["Formatted text prompt", "", ...]
+            - texts: ["Formatted text prompt", ...]
             - len(images) == len(texts) == batch_size
     """
-    # These two lists will hold the batch inputs
     images = []
     texts = []
 
     for msgs in messages:
-        # Extract all image fields from this conversation
+        # Extract images from message content
         raw_images = []
         for msg in msgs:
             if isinstance(msg.get("content"), list):
                 for item in msg["content"]:
-                    if item.get("type") == "image":
+                    if item.get("type") == "image" and "image" in item:
                         raw_images.append(item["image"])
+
         if not raw_images:
             raise ValueError("Image content not found in vision prompt")
 
-        # Decode each image to PIL and collect
-        pil_images: List[Image.Image] = []
-        for image_content in raw_images:
-            # Handle data URI header (e.g., "data:image/png;base64,...")
-            if "," in image_content:
-                image_content = image_content.split(",", 1)[1]
-            # Pad base64
-            padding = len(image_content) % 4
-            if padding:
-                image_content += "=" * (4 - padding)
-            pil = Image.open(io.BytesIO(base64.b64decode(image_content)))
-            pil_images.append(pil)
+        # Convert to PIL Images (handle both base64 strings and PIL objects)
+        pil_images = []
+        for img_data in raw_images:
+            if isinstance(img_data, Image.Image):
+                # Already PIL Image (from evaluation path)
+                pil_images.append(img_data)
+            elif isinstance(img_data, str):
+                # Base64 string (from batch inference path)
+                pil_images.append(_decode_base64_image(img_data))
+            else:
+                raise ValueError(f"Unsupported image type: {type(img_data)}")
 
-        # Add the list of PIL images for this conversation to the "batch"
         images.append(pil_images)
 
-        # Prepare text content for this conversation and add to "batch"
+        # Prepare text content for this conversation
         text = processor.apply_chat_template(
             msgs,
             tokenize=False,
@@ -126,6 +133,28 @@ def prepare_vision_inputs(
         texts.append(text)
 
     return images, texts
+
+
+def _decode_base64_image(image_content: str) -> Image.Image:
+    """
+    Helper function to decode base64 image string to PIL Image.
+
+    Args:
+        image_content: Base64 encoded image string (may include data URI prefix)
+
+    Returns:
+        PIL Image object
+    """
+    # Handle data URI header (e.g., "data:image/png;base64,...")
+    if "," in image_content:
+        image_content = image_content.split(",", 1)[1]
+
+    # Pad base64 if needed
+    padding = len(image_content) % 4
+    if padding:
+        image_content += "=" * (4 - padding)
+
+    return Image.open(io.BytesIO(base64.b64decode(image_content)))
 
 
 def get_model_device_config():

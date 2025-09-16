@@ -192,30 +192,26 @@ class InferenceOrchestrator:
             raise ValueError(
                 "local inference is not yet supported, provide model path from gcs or hf hub"
             )
-        else:
-            # Need to use storage strategy for GCS or handle HF Hub
-            strategy = StorageStrategyFactory.create_strategy(storage_type)
-            if storage_type == "gcs":
-                artifact = strategy.load_model_info(model_source)
-                resolved_model_path = artifact.local_path
-                provider_key = artifact.provider
-            else:  # hfhub
-                artifact = strategy.load_model_info(model_source)
-                resolved_model_path = artifact.remote_path
-                provider_key = (
-                    "unsloth" if base_model_id.startswith("unsloth/") else "huggingface"
-                )
 
-        # Determine modality and provider
-        modality = infer_modality_from_messages(messages)
-
-        # Override provider selection if vLLM is explicitly requested
-        if use_vllm:
-            provider_key = "vllm"
-
-        provider = self.providers.get(provider_key, "huggingface")
-
+        strategy = StorageStrategyFactory.create_strategy(storage_type)
+        resolved_model_path = None
         try:
+            resolved_model_path = strategy.load_model_info(model_source)
+
+            # Infer provider key outside the storage's artifact system
+            provider_key = (
+                "unsloth" if base_model_id.startswith("unsloth/") else "huggingface"
+            )
+
+            # Determine modality and provider
+            modality = infer_modality_from_messages(messages)
+
+            # Override provider selection if vLLM is explicitly requested
+            if use_vllm:
+                provider_key = "vllm"
+
+            provider = self.providers.get(provider_key, "huggingface")
+
             outputs = provider.run_batch_inference(
                 base_model_id, resolved_model_path, model_type, messages, modality
             )
@@ -225,8 +221,8 @@ class InferenceOrchestrator:
         finally:
             # Provider cleanup is handled within each provider's run_batch_inference method
             # Additional cleanup for storage artifacts
-            if artifact:
-                strategy.cleanup(artifact)
+            if resolved_model_path:
+                strategy.cleanup(resolved_model_path)
 
         logger.info(
             f"Batch inference for {model_source} completed in {time.time() - start_time:.2f} seconds."

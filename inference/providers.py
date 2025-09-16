@@ -182,7 +182,10 @@ class HuggingFaceInferenceProvider(BaseInferenceProvider):
         model_type: str,
         messages: List,
     ) -> List[str]:
-        """Run vision-based batch inference using HuggingFace Transformers"""
+        """
+        Run vision-based batch inference using HuggingFace Transformers.
+        Now supports both old format (embedded images) and new format (separate images field).
+        """
         from transformers import AutoModelForImageTextToText, AutoProcessor
         from transformers.utils.quantization_config import BitsAndBytesConfig
 
@@ -412,6 +415,7 @@ class VLLMInferenceProvider(BaseInferenceProvider):
         model_type: str,
         messages: List,
     ) -> List[str]:
+        """Run vision-based batch inference using vLLM"""
         from vllm import LLM, SamplingParams
         from transformers import AutoProcessor
 
@@ -437,31 +441,18 @@ class VLLMInferenceProvider(BaseInferenceProvider):
                     temperature=0.7, top_p=0.95, max_tokens=100
                 )
 
-            prompts = []
-            images = []
-            for conv in messages:
-                prompts.append(
-                    processor.apply_chat_template(
-                        conv, tokenize=False, add_generation_prompt=True
-                    )
-                )
-                # Extract images from structured content
-                for msg in conv:
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        for segment in content:
-                            if segment.get("type") == "image":
-                                images.append(segment["image"])
+            images, texts = prepare_vision_inputs(processor, messages)
 
             if model_type == "adapter":
                 outputs = llm.generate(
-                    {"prompt": prompts, "multi_modal_data": {"image": images}},
+                    # multi_modal_data takes a list of images
+                    {"prompt": texts, "multi_modal_data": {"image": images}},
                     sampling_params=sampling_params,
                     lora_request=lora_request,
                 )
             else:
                 outputs = llm.generate(
-                    {"prompt": prompts, "multi_modal_data": {"image": images}},
+                    {"prompt": texts, "multi_modal_data": {"image": images}},
                     sampling_params=sampling_params,
                 )
             return [out.outputs[0].text for out in outputs]
