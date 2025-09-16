@@ -1,82 +1,52 @@
-# Facet, a no-code fine-tuning PaaS for Gemma
+# Facet AI, LLM fine-tuning for everyone
 
-Looking for a way to fine-tune small / vision language models without diving into complex code? Our no-code web platform simplifies the process of adapting LLM for task and domain specific use cases, allowing you to manage and run fine-tuning jobs effortlessly on Google Cloud Platform (GCP). From dataset preprocessing to model export, everything is customizable to your use case while being intuitive to use.
+Developed by two Google Summer of Code students at DeepMind, Facet AI is a no-code web platform to manage the fine-tuning workflows of DeepMind's Gemma 3 family of multimodal models. Handling everything from dataset preprocessing to model export, **Facet AI lets you focus on what matters for your use case, not writing boilerplate code and scrolling through pages of documentations and cookbook.**
 
-This is brought to you by Jet Chiang (@supreme-gg-gg) & Adarsh Dubey (@inclinedadarsh) as part of Google Summer of Code 2025 @ Google DeepMind.
+We cannot wait to see what you bring to the **Gemmaverse** with Facet AI!
 
-## GSoC Midterm Demo
+## Background
 
-[![Demo Video](https://img.youtube.com/vi/r4jW997KXvc/0.jpg)](https://www.youtube.com/watch?v=r4jW997KXvc)
+Cookbooks and Colab notebooks are amazing, except that they don't scale when you have multiple datasets, models, and experiments to track. Facet AI not only provides an open-sourced backend to streamline and centralize all your fine-tuning needs, but also makes it easy for non-technical users to leverage the power of cutting-edge post-training techniques and Google Cloud without writing a single line of code.
 
-> A new demo is coming soon with more features as well as a beta release!
+Watch our demo video!! 👇👇
+
+[![Demo Video](https://img.youtube.com/vi/JGnzoLSZReI/0.jpg)](https://www.youtube.com/watch?v=JGnzoLSZReI)
 
 ## Features
 
-- Data preprocessing (for vision and text) from custom uploaded and huggingface datasets
-- Data augmentation using NLP techniques and synthetic generation using LLM
-- Fine-tuning using both Huggingface or Unsloth frameworks on text and multimodal datasets
-- Fine-tuning with SFT for domain adaptation, DPO for preference alignment, and GRPO for reasoning tasks
-- Fine-tuning with PEFT (LoRA, QLoRA) and full tuning, with quantization support (4-bit, 8-bit)
-- Export to multiple formats (supports transformeres, vLLM, Ollama, llama.cpp, etc) to GCS bucket or huggingface hub
-- Convert between different model formats to suite your deployment needs
-- Cloud logging integration with Weights & Biases or TensorBoard
-- Task-specific evaluation suites and batch inference ("vibe check") of fine tuned models
+| Category      | Feature             | Description                                                              | Supported Formats/Methods                                                        |
+| ------------- | ------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| **Dataset**   | Preprocessing       | Process vision and text data from custom uploads and Hugging Face        | Custom files, Hugging Face datasets                                              |
+|               | Augmentation        | Enhance datasets using NLP techniques and LLM-based synthetic generation | Transformers, Gemini, NLTK generation                                            |
+| **Training**  | Multiple Frameworks | Fine-tune using industry-standard frameworks                             | Hugging Face Transformers, Unsloth                                               |
+|               | Training Methods    | Support for various post-training techniques                             | SFT (domain adaptation), DPO/ORPO (preference alignment), GRPO (reasoning tasks) |
+|               | Optimized Training  | Flexible training approaches with quantization support                   | PEFT (LoRA, QLoRA), Full tuning, 4-bit/8-bit quantization                        |
+|               | Multimodal Support  | Fine-tune both text and vision models                                    | Text and multimodal datasets                                                     |
+| **Utilities** | Model Export        | Export trained models to multiple deployment formats                     | Adapters, merged, quantized, GGUF, Hub or GCS                                    |
+|               | Training Monitoring | Comprehensive logging and monitoring to track your train jobs            | Weights & Biases, `trackio` (coming soon)                                        |
+|               | Model Evaluation    | Task and metric evaluation, batch inference testing                      | Benchmarks, custom dataset, "vibe check", model comparison                       |
+|               | Model Deployment    | One-click deployment of trained models to GCP for inference              | Cloud Run                                                                        |
 
 ### Coming Soon
 
-- IaC and deployment scripts so you can run this on your own GCP project!
 - More data augmentation for vision and text datasets
 - Audio modality support for Gemma 3n
-- Direct deployment on GCP of fine tuned model using Ollama or vLLM (one-click and ready for inference)
+- Full feature plan is tracked in [Project Roadmap](https://github.com/gemma-facet/cloud-services/issues/52)
 
 ## Usage
 
-1. Use it for free on our website platform once it's live (beta coming soon!)
+1. Use it for free on our website platform: [https://gemma-facet.vercel.app/](https://gemma-facet.vercel.app/)
 
-2. Deploy the project to your own google cloud project!
-
-   We hope to support more flexible deployment options in the future.
+2. Deploy the project to your own google cloud project with our Terraform and Cloud Build scripts, see `infrastructure/README.md` for details.
 
 3. Use this as a reference to build your own fine-tuning service since we're fully open source!
 
 ## Architecture
 
-```mermaid
-graph TD
-subgraph Frontend
-B["User"]
-end
+![Architecture Diagram](infrastructure/facet-gcp-v3.png)
 
-    subgraph Authentication
-        B -- "API Request (JWT)" --> X["API Gateway"]
-    end
+## Documentation
 
-    subgraph Backend
-        X -- "Preprocess Request" --> C["Preprocessing Service"]
-        C -- "Track Dataset" --> F1["Firestore (Datasets)"]
-        C -- "Store Data" --> H["GCS"]
-        X -- "Inference, Eval, Export" --> G["Inference Service"]
-        X -- "Train Request" --> D["Training Service"]
-        D -- "Trigger Job (gRPC) & Write Config to GCS" --> E["Training Job"]
-        E -- "Read Data, Export Model" --> H
-        E -- "Update Status" --> F2["Firestore (Jobs)"]
-        F2 -- "Read status" --> D
-        G -- "Load Model" --> H
-    end
-
-    classDef cpu fill:#e0f7fa,stroke:#333,stroke-width:1px;
-    classDef gpu fill:#fff3e0,stroke:#333,stroke-width:1px;
-    classDef storage fill:#f3e5f5,stroke:#333,stroke-width:1px;
-    classDef gateway fill:#ffe082,stroke:#333,stroke-width:1px;
-
-    class C,D cpu;
-    class G,E gpu;
-    class F1,F2,H storage;
-    class X gateway;
-```
-
-## Developers Notes
-
-- Read the `README.md` in each subdirectory for more details.
-- Deployment current uses `cloudbuild.yaml`, make sure you set the correct project ID with `gcloud config set project <project-id>`
-- Unless you have a CUDA GPU don't try to install all packages for certain services, it will fail locally (especially on Mac), use Colab for experiments instead
+- User docs are live on [here](https://facetai.mintlify.app)
+- Developer docs are work in progress, use `README.md` in each directory for now
+- API reference is auto generated by FastAPI and available together with user docs.
