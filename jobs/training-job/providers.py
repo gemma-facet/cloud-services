@@ -1,6 +1,5 @@
 import logging
 import torch
-import io
 from typing import Any, Tuple
 from datasets import Dataset
 
@@ -191,25 +190,29 @@ def _build_shared_training_args(
 
 def _reformat_vision_dataset(example):
     """
-    Convert vision datasets from complete ChatML format to the format expected by GRPO/DPO/ORPO trainers.
-    This extracts images to a separate column and applies chat template to create prompt strings.
-    This can also be done by formatting dataset differently in preprocessing, but post-processing is what we've chosen.
+    Convert vision datasets from ChatML format to the format expected by GRPO/DPO/ORPO trainers.
 
-    NOTE: We do NOT recommend using SFTTrainer with this YET due to multi-image support requiring data collator!!!
-
-    NOTE: This is used now because we have not completely migrated all datasets to this new format.
-    This is under work and once it's done we no longer need to reformat here.
+    With the new format, images are already in a separate 'images' field, so this is much simpler.
+    For backward compatibility, also handles the old format where images were embedded in content.
 
     Automatically detects format:
-    - Prompt-only format (for GRPO): {"prompt": [...], "answer": "...", "reasoning": "...", ...}
-      Output: {"prompt": "templated_string", "image": PIL.Image, "answer": "...", "reasoning": "...", ...}
+    - Language modeling format (for SFT): {"messages": [...]}
+      Output: {"messages": [...], "images": [PIL.Image], ...}
+
+    - Prompt-only format (for GRPO): {"prompt": [...], "answer": "...", ...}
+      Output: {"prompt": "templated_string", "image": PIL.Image, "answer": "...", ...}
 
     - Preference format (for DPO/ORPO): {"prompt": [...], "chosen": [...], "rejected": [...]}
       Output: {"prompt": "templated_string", "chosen": "templated_string", "rejected": "templated_string", "images": [PIL.Image]}
     """
     from PIL import Image
 
-    def get_images_from_prompt(prompt_messages):
+    # new format does not need to reformat, works directly with trainers' default collator
+    if "images" in example and example["images"]:
+        return example
+
+    def get_images_from_content_legacy(prompt_messages):
+        """Legacy function to extract images from old format content items (backward compatibility)."""
         image_list = []
         if not isinstance(prompt_messages, list):
             return image_list
@@ -227,33 +230,23 @@ def _reformat_vision_dataset(example):
                     isinstance(content_part, dict)
                     and content_part.get("type") == "image"
                 ):
+                    # Old format: check for embedded image data
                     image_data = content_part.get("image")
                     if isinstance(image_data, Image.Image):
                         image_list.append(image_data.convert("RGB"))
-                    elif isinstance(image_data, dict) and "bytes" in image_data:
-                        img_bytes = image_data["bytes"]
-                        if isinstance(img_bytes, (bytes, bytearray)):
-                            try:
-                                pil_img = Image.open(io.BytesIO(img_bytes))
-                                image_list.append(pil_img.convert("RGB"))
-                            except Exception:
-                                # Ignore corrupted images
-                                pass
+                    # Note: HF format conversion now handled in storage.py during dataset loading
         return image_list
 
     if all(k in example for k in ("prompt", "chosen", "rejected")):
-        # in DPOTrainer/ORPOTrainer._prepare_dataset the _process_row requires the "images" field
-        # It then handles all chat template and tokenization automatically for all three columns
-        # see trl.maybe_apply_chat_template for details
-        example["images"] = get_images_from_prompt(example.get("prompt"))
+        example["images"] = get_images_from_content_legacy(example.get("prompt"))
+    elif "messages" in example:
+        example["images"] = get_images_from_content_legacy(example.get("messages"))
     elif "prompt" in example:
-        # GRPOTrainer._generate_and_score_completions will look for "image", then apply chat template with tokenization
-        # then it will handle image processing using self.processing_class and the prompt_text:
-        images = get_images_from_prompt(example.get("prompt"))
+        images = get_images_from_content_legacy(example.get("prompt"))
         example["image"] = images[0] if images else None
     else:
         raise ValueError(
-            "Example must contain 'prompt' field (for GRPO) or 'prompt', 'chosen', and 'rejected' fields (for DPO/ORPO)"
+            "Example must contain 'prompt' field (for GRPO) or 'prompt', 'chosen', and 'rejected' fields (for DPO/ORPO) or 'messages' field (for SFT)"
         )
 
     return example
@@ -400,12 +393,17 @@ class HuggingFaceTrainingService(BaseTrainingService):
         Otherwise you should provide a data collator that is used by the trainer to do reformatting internally.
         Or you can provide a formatting_func in the trainer.
         """
-        if modality == "vision" and trainer_type in ["dpo", "grpo", "orpo"]:
-            # Convert vision datasets to the format expected by GRPO/DPO trainers and they will handle processing
-            # NOTE: do not use batching here since it will make each column a list and break the format function
-            train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
-            if eval_ds is not None:
-                eval_ds = eval_ds.map(lambda example: _reformat_vision_dataset(example))
+        if modality == "vision":
+            if "images" not in train_ds.column_names:
+                # Backward compatibility with old dataset not saved with "images" columns since TRL 0.22.0
+                # NOTE: do not use batching here since it will make each column a list and break the format function
+                train_ds = train_ds.map(
+                    lambda example: _reformat_vision_dataset(example)
+                )
+                if eval_ds is not None:
+                    eval_ds = eval_ds.map(
+                        lambda example: _reformat_vision_dataset(example)
+                    )
 
         return train_ds, eval_ds
 
@@ -474,6 +472,7 @@ class HuggingFaceTrainingService(BaseTrainingService):
         trainer_type: str,
         cfg: TrainingConfig,
     ) -> Any:
+        # NOTE: TRL trainers now handle vision processing directly!
         # Common trainer arguments
         base_trainer_args = {
             "model": model,
@@ -487,9 +486,9 @@ class HuggingFaceTrainingService(BaseTrainingService):
             # For SFT Trainer we use custom collator to support multiple images and support computing metrics
             return self.SFTTrainer(
                 **base_trainer_args,
-                data_collator=self._create_vision_collate_fn(tokenizer_or_processor)
-                if cfg.modality == "vision"
-                else None,
+                # data_collator=self._create_vision_collate_fn(tokenizer_or_processor)
+                # if cfg.modality == "vision"
+                # else None,
                 compute_metrics=create_compute_metrics(
                     cfg.eval_config.compute_eval_metrics,
                     cfg.eval_config.batch_eval_metrics,
@@ -506,101 +505,11 @@ class HuggingFaceTrainingService(BaseTrainingService):
                 reward_funcs=reward_funcs,
             )
         elif trainer_type == "dpo":
-            # NOTE: DPO Trainer doesn't need collator for vision, we reformat the dataset manually
             return self.DPOTrainer(**base_trainer_args)
         elif trainer_type == "orpo":
-            # NOTE: ORPO uses the same dataset format as DPO (preference pairs)
             return self.ORPOTrainer(**base_trainer_args)
         else:
             raise ValueError(f"Unsupported trainer type: {trainer_type}")
-
-    def _create_vision_collate_fn(self, processor):
-        """
-        Create vision collate function for HuggingFace SFT vision training.
-        This ONLY works with SFTTrainer dataset type because GRPO, DPO, and ORPO do not use data collator.
-        They require a pre-formatted dataset and handles vision processing internally.
-        NOTE: There is no built in hugging face vision collator unlike Unsloth
-        """
-        from PIL import Image
-
-        def vision_collate_fn(examples):
-            """
-            Collate function for vision datasets that are already in ChatML format with images.
-            1. First apply chat template to all examples in this batch (converts from conversational to standard format)
-            2. Extract images from type:image fields and apply them to processors in the correct order
-            3. Do some postprocessing on the tokens and labels and return the batch with text and images
-            """
-            texts = [
-                processor.apply_chat_template(
-                    example["messages"],
-                    tokenize=True,
-                    add_generation_prompt=False,
-                ).strip()
-                for example in examples
-            ]
-
-            # Extract images from pre-processed ChatML messages
-            def extract_images_from_messages(messages):
-                images = []
-                for msg in messages:
-                    content = msg.get("content", [])
-                    if isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "image":
-                                img_data = item.get("image")
-                                if img_data:
-                                    # Handle PIL Image objects
-                                    if isinstance(img_data, Image.Image):
-                                        images.append(img_data.convert("RGB"))
-                                    # Handle HuggingFace dataset format: {"bytes": ..., "path": null}
-                                    elif (
-                                        isinstance(img_data, dict)
-                                        and "bytes" in img_data
-                                    ):
-                                        image_bytes = img_data["bytes"]
-                                        if isinstance(image_bytes, (bytes, bytearray)):
-                                            pil_image = Image.open(
-                                                io.BytesIO(image_bytes)
-                                            )
-                                            images.append(pil_image.convert("RGB"))
-                return images
-
-            images = [
-                extract_images_from_messages(example["messages"])
-                for example in examples
-            ]
-
-            # Tokenize texts and process images
-            batch = processor(
-                text=texts, images=images, return_tensors="pt", padding=True
-            )
-
-            # Setup labels (mask padding and special tokens)
-            labels = batch["input_ids"].clone()
-
-            # Mask image tokens if they exist
-            try:
-                # Mask image tokens
-                image_token_id = [
-                    processor.tokenizer.convert_tokens_to_ids(
-                        processor.tokenizer.special_tokens_map["boi_token"]
-                    )
-                ]
-                labels[labels == image_token_id] = -100
-            except KeyError:
-                logging.warning(
-                    "Trying to run vision training but no image token found"
-                )
-                pass  # Skip if no image token
-
-            # Mask other tokens not used in loss computation
-            labels[labels == processor.tokenizer.pad_token_id] = -100
-            labels[labels == 262144] = -100
-
-            batch["labels"] = labels
-            return batch
-
-        return vision_collate_fn
 
 
 class UnslothTrainingService(BaseTrainingService):
@@ -737,10 +646,15 @@ class UnslothTrainingService(BaseTrainingService):
                 else None
             )
         # Convert vision datasets to the format expected by GRPO/DPO/ORPO trainers
-        elif modality == "vision" and trainer_type in ["dpo", "grpo", "orpo"]:
-            train_ds = train_ds.map(lambda example: _reformat_vision_dataset(example))
-            if eval_ds is not None:
-                eval_ds = eval_ds.map(lambda example: _reformat_vision_dataset(example))
+        elif modality == "vision":
+            if "images" not in train_ds.column_names:
+                train_ds = train_ds.map(
+                    lambda example: _reformat_vision_dataset(example)
+                )
+                if eval_ds is not None:
+                    eval_ds = eval_ds.map(
+                        lambda example: _reformat_vision_dataset(example)
+                    )
 
         return train_ds, eval_ds
 
@@ -842,6 +756,7 @@ class UnslothTrainingService(BaseTrainingService):
                 **base_trainer_args,
                 data_collator=(
                     # if modality is vision this is processor
+                    # Unsloth vision collator supports the new "images" format for SFT as well
                     self.UnslothVisionDataCollator(model, tokenizer_or_processor)
                     if cfg.modality == "vision"
                     else None

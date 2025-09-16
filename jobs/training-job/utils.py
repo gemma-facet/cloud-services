@@ -168,6 +168,8 @@ def save_and_track(
     # Determine temp directory based on export format
     temp_dir = f"/tmp/{job_id}_{export_config.format}"
     gguf_file_path = None
+    remote_path = None
+    gguf_remote_path = None
 
     try:
         # Prepare primary model for export based on configuration
@@ -189,25 +191,16 @@ def save_and_track(
         )
 
         # The model has already been saved locally by our export logic above
-        if export_config.destination == "hfhub":
-            # HuggingFace Hub requires the hf_repo_id parameter
-            artifact = storage_strategy.save_model(
-                actual_temp_dir,  # Local directory containing saved files
-                job_id,
-                base_model_id,
-                export_config.format,
-                export_config.hf_repo_id,  # hf_repo_id parameter for HF Hub
-                provider,
-            )
-        else:
-            # GCS and other storage types
-            artifact = storage_strategy.save_model(
-                actual_temp_dir,  # Local directory containing saved files
-                job_id,
-                base_model_id,
-                export_config.format,
-                provider,
-            )
+        remote_path = storage_strategy.save_model(
+            local_path=actual_temp_dir,
+            job_id=job_id,
+            base_model_id=base_model_id,
+            export_format=export_config.format,
+            provider=provider,
+            hf_repo_id=export_config.hf_repo_id
+            if export_config.destination == "hfhub"
+            else None,
+        )
 
         if gguf_file_path:
             # Use save_file for single GGUF file upload, destination is always same as model
@@ -221,18 +214,18 @@ def save_and_track(
             )
 
         # Cleanup storage artifacts
-        storage_strategy.cleanup(artifact)
+        storage_strategy.cleanup(actual_temp_dir)
 
         # Mark job as completed with primary artifact path
         job_tracker.completed(
-            artifact.remote_path,
-            artifact.base_model_id,
+            remote_path,
+            base_model_id,
             export_config.format,
             metrics,
             gguf_path=gguf_remote_path if gguf_file_path else None,
         )
 
-        return artifact
+        return remote_path
 
     except Exception as e:
         logging.error(f"Error during model export: {e}")

@@ -163,11 +163,19 @@ def prepare_evaluation_data(
 ) -> Tuple[List[List[Dict[str, Any]]], List[str]]:
     """
     Prepare evaluation data by extracting both input messages and reference texts.
-    This combines the functionality of prepare_evaluation_messages and extract_references_from_dataset
-    for better efficiency (single pass through the dataset).
+
+    Handles multiple dataset formats:
+    1. NEW format: {"messages": [...], "images": [PIL.Image, ...]} - converts to OLD format
+    2. OLD format: {"messages": [...]} with images embedded in content
+    3. Prompt-only format: {"prompt": [...], "images": [...], "answer": "...", ...}
+    4. Preference format: {"prompt": [...], "chosen": [...], "rejected": [...], "images": [...]}
+    5. Other formats: {"conversation": [...], etc.}
+
+    Converts NEW format back to OLD format by embedding images from "images" field
+    into message content for compatibility with inference pipeline.
 
     Args:
-        dataset: HuggingFace dataset with messages in ChatML format
+        dataset: HuggingFace dataset in various formats
 
     Returns:
         Tuple of (eval_messages, references) where:
@@ -178,54 +186,145 @@ def prepare_evaluation_data(
     references = []
 
     for example in dataset:
-        messages = example.get("messages", [])
+        images = example.get("images", [])  # PIL images from NEW format
 
-        # Prepare input messages (everything except assistant messages)
-        input_messages_for_eval = []
-        reference = None
+        # Handle different dataset formats
+        if "messages" in example:
+            # Standard conversational format
+            messages = example["messages"]
+            if images:
+                messages = _convert_new_format_to_old_format(messages, images)
 
-        for message in messages:
-            if message.get("role") in ["user", "system"]:
-                input_messages_for_eval.append(message)
-            elif message.get("role") == "assistant":
-                # First assistant message becomes the reference (extract text only)
-                if reference is None:
-                    content = message.get("content", "")
-                    # Handle both new structured format and legacy format
-                    if isinstance(content, list):
-                        # New format: content is list of objects with type/text fields
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                text_parts.append(str(item.get("text", "")))
-                            elif isinstance(item, str):
-                                text_parts.append(item)
-                            else:
-                                # For other types (like images), convert to string
-                                text_parts.append(str(item))
-                        reference = " ".join(text_parts)
-                    else:
-                        # Legacy format: content is a simple string
-                        reference = str(content)
-                # Stop at first assistant message - we want to generate from this point
-                break
+            input_messages, reference = _extract_from_conversational_format(messages)
+
+        elif "prompt" in example:
+            # Prompt-only or preference format
+            prompt = example["prompt"]
+            if images:
+                prompt = _convert_new_format_to_old_format(prompt, images)
+
+            input_messages = prompt if isinstance(prompt, list) else [prompt]
+
+            # For prompt-only, look for answer/response fields
+            reference = None
+            for ref_field in ["answer", "response", "chosen", "output"]:
+                if ref_field in example and example[ref_field]:
+                    reference = str(example[ref_field])
+                    break
+
+            if reference is None:
+                reference = ""
+                logger.warning("No reference field found in prompt-only format")
+
+        else:
+            logger.warning(
+                "No recognized conversation field found in example, skipping"
+            )
+            continue
 
         # Add to results if we have input messages
-        if input_messages_for_eval:
-            eval_messages.append(input_messages_for_eval)
-            # Add reference (or empty string if no assistant message found)
-            if reference is not None:
-                # Ensure reference is always a string before calling strip()
-                reference_str = (
-                    str(reference) if not isinstance(reference, str) else reference
-                )
-                references.append(reference_str.strip())
-            else:
-                references.append("")
-                logger.warning(
-                    "No assistant message found in example, using empty reference"
-                )
+        if input_messages:
+            eval_messages.append(input_messages)
+            references.append(reference.strip() if reference else "")
         else:
-            logger.warning("No user/system messages found in example, skipping")
+            logger.warning("No input messages found in example, skipping")
 
     return eval_messages, references
+
+
+def _extract_from_conversational_format(messages: List[Dict]) -> Tuple[List[Dict], str]:
+    """
+    Extract input messages and reference from conversational format.
+
+    Args:
+        messages: List of message dicts in ChatML format
+
+    Returns:
+        Tuple of (input_messages, reference)
+    """
+    input_messages_for_eval = []
+    reference = None
+
+    for message in messages:
+        if message.get("role") in ["user", "system"]:
+            input_messages_for_eval.append(message)
+        elif message.get("role") == "assistant":
+            # First assistant message becomes the reference (extract text only)
+            if reference is None:
+                content = message.get("content", "")
+                # Handle both new structured format and legacy format
+                if isinstance(content, list):
+                    # New format: content is list of objects with type/text fields
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_parts.append(str(item.get("text", "")))
+                        elif isinstance(item, str):
+                            text_parts.append(item)
+                        else:
+                            # For other types (like images), convert to string
+                            text_parts.append(str(item))
+                    reference = " ".join(text_parts)
+                else:
+                    # Legacy format: content is a simple string
+                    reference = str(content)
+            # Stop at first assistant message - we want to generate from this point
+            break
+
+    return input_messages_for_eval, reference or ""
+
+
+def _convert_new_format_to_old_format(messages: List[Dict], images: List) -> List[Dict]:
+    """
+    Convert NEW format (separate images field) to OLD format (embedded images).
+
+    NEW format:
+    - messages: [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "..."}]}]
+    - images: [PIL.Image, PIL.Image, ...]
+
+    OLD format:
+    - messages: [{"role": "user", "content": [{"type": "image", "image": PIL.Image}, {"type": "text", "text": "..."}]}]
+
+    Args:
+        messages: List of message dicts with image placeholders
+        images: List of PIL Image objects
+
+    Returns:
+        List of message dicts with images embedded in content
+    """
+    if not images:
+        return messages
+
+    converted_messages = []
+    image_index = 0
+
+    for message in messages:
+        converted_message = message.copy()
+        content = message.get("content", [])
+
+        if isinstance(content, list):
+            converted_content = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "image":
+                    # Replace placeholder with actual image
+                    if image_index < len(images):
+                        converted_content.append(
+                            {
+                                "type": "image",
+                                "image": images[image_index],  # PIL Image object
+                            }
+                        )
+                        image_index += 1
+                    else:
+                        logger.warning(
+                            "Not enough images for placeholders, skipping placeholder"
+                        )
+                else:
+                    # Keep other content as-is
+                    converted_content.append(item)
+
+            converted_message["content"] = converted_content
+
+        converted_messages.append(converted_message)
+
+    return converted_messages

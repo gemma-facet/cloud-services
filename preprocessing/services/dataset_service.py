@@ -310,11 +310,14 @@ class DatasetService:
                         table = pq.read_table(io.BytesIO(split_data))
                         samples = table.slice(0, 5).to_pylist()
 
-                        # For vision datasets, convert PIL Images to base64 for API response
-                        if metadata.get("modality", "text") == "vision":
-                            samples = [self.convert_pil_to_base64(s) for s in samples]
-                            # Filter out any samples that became None during conversion
-                            samples = [s for s in samples if s is not None]
+                        # For vision datasets, convert images to base64 for API response
+                        modality = metadata.get("modality", "text")
+                        samples = [
+                            self._prepare_sample_for_api(s, modality) for s in samples
+                        ]
+                        # Filter out any samples that became None during conversion
+                        samples = [s for s in samples if s is not None]
+                        if modality == "vision":
                             logger.info(
                                 "Converted vision samples to base64 for API response"
                             )
@@ -381,47 +384,97 @@ class DatasetService:
             logger.error(f"Split augmentation failed: {e}")
             return dataset
 
-    def convert_pil_to_base64(self, obj):
+    def _prepare_sample_for_api(self, sample: dict, modality: str) -> dict:
         """
-        Helper method to convert PIL images or HuggingFace image format to base64.
+        Prepares a single data sample for API output. If it's a vision sample,
+        converts all image representations into base64 data URLs.
         """
-        # Case 1: PIL Images
-        if isinstance(obj, Image.Image):
-            buf = io.BytesIO()
-            obj.save(buf, format="PNG")
-            image_bytes = buf.getvalue()
-            encoded = base64.b64encode(image_bytes).decode("utf-8")
-            return f"data:image/png;base64,{encoded}"
-        elif isinstance(obj, dict):
-            # NOTE: This is the core logic because each "image" field is of this format!
-            # Handle HuggingFace image format: {"bytes": ..., "path": null}
-            if "bytes" in obj and obj.get("path") is None:
-                try:
-                    image_bytes = obj["bytes"]
-                    if isinstance(image_bytes, (bytes, bytearray)):
-                        # Convert bytes to PIL Image, then to base64
-                        pil_image = Image.open(io.BytesIO(image_bytes))
-                        buf = io.BytesIO()
-                        pil_image.save(buf, format="PNG")
-                        encoded_bytes = buf.getvalue()
-                        encoded = base64.b64encode(encoded_bytes).decode("utf-8")
-                        return f"data:image/png;base64,{encoded}"
-                except Exception as e:
-                    logger.warning(f"Failed to convert HF image format: {e}")
-                    return None
-            else:
-                # Regular dict - process recursively and filter nulls
-                converted = {
-                    k: self.convert_pil_to_base64(v)
-                    for k, v in obj.items()
-                    if v is not None
-                }
-                # Filter out any keys that resulted in None values
-                return {k: v for k, v in converted.items() if v is not None}
-        elif isinstance(obj, list):
-            # Filter out None values from lists
-            converted_list = [self.convert_pil_to_base64(v) for v in obj]
-            return [v for v in converted_list if v is not None]
-        elif obj is None:
+        if modality != "vision" or not isinstance(sample, dict):
+            return sample
+
+        # New format is the standard, check for it first.
+        if "messages" in sample and "images" in sample:
+            return self._format_new_vision_sample(sample)
+
+        # Fallback for old formats
+        return self._format_old_vision_sample(sample)
+
+    def _format_new_vision_sample(self, sample: dict) -> dict:
+        """Formats a new-style vision sample by inlining base64 images."""
+        import copy
+
+        base64_images = [
+            self._convert_image_to_base64_url(img) for img in sample.get("images", [])
+        ]
+        base64_images = [b64 for b64 in base64_images if b64]
+
+        # Deep copy to avoid modifying the original sample
+        api_sample = {"messages": copy.deepcopy(sample.get("messages", []))}
+
+        image_idx = 0
+        for message in api_sample["messages"]:
+            if not isinstance(message.get("content"), list):
+                continue
+
+            new_content = []
+            for content_item in message["content"]:
+                if (
+                    isinstance(content_item, dict)
+                    and content_item.get("type") == "image"
+                ):
+                    if image_idx < len(base64_images):
+                        new_content.append(
+                            {"type": "image", "image": base64_images[image_idx]}
+                        )
+                        image_idx += 1
+                else:
+                    new_content.append(content_item)
+            message["content"] = new_content
+
+        return api_sample
+
+    def _format_old_vision_sample(self, data: any) -> any:
+        """Recursively formats an old-style vision sample."""
+        if isinstance(data, dict):
+            # If the dict itself is an image, convert it.
+            b64_url = self._convert_image_to_base64_url(data)
+            if b64_url:
+                return b64_url
+
+            # Otherwise, recurse on its values.
+            return {k: self._format_old_vision_sample(v) for k, v in data.items()}
+
+        if isinstance(data, list):
+            return [self._format_old_vision_sample(item) for item in data]
+
+        # If the item is a standalone image (e.g. in a list), convert it.
+        b64_url = self._convert_image_to_base64_url(data)
+        return b64_url if b64_url else data
+
+    def _convert_image_to_base64_url(self, image_data: any) -> Optional[str]:
+        """
+        Converts a supported image representation (PIL, HF dict) into a
+        base64 data URL. Returns None if the format is not recognized or fails.
+        """
+        pil_image = None
+        if isinstance(image_data, Image.Image):
+            pil_image = image_data
+        elif isinstance(image_data, dict) and "bytes" in image_data:
+            try:
+                image_bytes = image_data.get("bytes")
+                if isinstance(image_bytes, (bytes, bytearray)):
+                    pil_image = Image.open(io.BytesIO(image_bytes))
+            except Exception as e:
+                logger.warning(f"Failed to create PIL Image from bytes: {e}")
+
+        if not pil_image:
             return None
-        return obj
+
+        try:
+            buf = io.BytesIO()
+            pil_image.save(buf, format="PNG")
+            encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return f"data:image/png;base64,{encoded}"
+        except Exception as e:
+            logger.warning(f"Failed to encode PIL Image to base64: {e}")
+            return None

@@ -63,18 +63,18 @@ class FormatConverter:
         """
         try:
             # Map processing modes to their conversion functions and validation fields
-            # required_fields are already validated by model validator for the config structure
+            # Use batch converters for better performance
             mode_mapping = {
                 "language_modeling": {
-                    "converter": self._convert_single_example,
+                    "converter": self._convert_batch_examples,
                     "filter_key": "messages",
                 },
                 "prompt_only": {
-                    "converter": self._convert_single_example_prompt_only,
+                    "converter": self._convert_batch_examples_prompt_only,
                     "filter_key": "prompt",
                 },
                 "preference": {
-                    "converter": self._convert_single_example_preference,
+                    "converter": self._convert_batch_examples_preference,
                     "filter_key": "prompt",
                 },
             }
@@ -134,7 +134,8 @@ class FormatConverter:
                     "field_mappings": field_mappings,
                     "is_multimodal": has_image_fields,
                 },
-                batched=False,
+                batched=True,  # Enable batching for better performance
+                batch_size=1000,  # Process 1000 examples at a time, this is the default HF value
                 remove_columns=dataset[next(iter(dataset))].column_names,
             )
 
@@ -180,31 +181,33 @@ class FormatConverter:
         Returns:
             Dict: The converted example in ChatML format with messages field, or empty dict if conversion fails
 
-            The language modelling type follows this structure:
+            The language modelling type follows this structure (this is each row, i.e. dataset[0])
             ```json
             {
                 "messages": [
                     {"role": "system", "content": [{"type": "text", "text": "System message"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "User message"}]},
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "User prompt"}]},
                     {"role": "assistant", "content": [{"type": "text", "text": "Assistant response"}]}
-                ]
+                ],
+                "images": [<PIL.Image.Image object>, ...]
             }
             ```
         """
         try:
             messages: List[Dict[str, Any]] = []
+            all_images: List[Any] = []
 
             # System message
             sys_msg = self._create_system_message(example, field_mappings)
             if sys_msg:
                 messages.append(sys_msg)
 
-            # User message (text only)
-            user_msg = self._create_user_message(
+            user_msg, user_images = self._create_user_message(
                 example, field_mappings, is_multimodal=is_multimodal
             )
             if user_msg:
                 messages.append(user_msg)
+                all_images.extend(user_images)
 
             # Assistant message
             assistant_msg = self._create_assistant_message(example, field_mappings)
@@ -213,18 +216,17 @@ class FormatConverter:
 
             # Validate -- this sometimes fail for a few samples but we still return a empty dict instead of raising an error
             if self._validate_messages(messages):
-                return {"messages": messages}
+                result = {"messages": messages}
+                # Add images field for multimodal datasets (new format)
+                if is_multimodal and all_images:
+                    result["images"] = all_images
+                return result
             else:
-                logger.warning(
-                    f"Validation failed for example with {len(messages)} messages"
-                )
+                logger.warning("Validation failed for example, skipping.")
                 return {"messages": []}
+
         except Exception as e:
             logger.error(f"Failed to convert single example: {e}")
-            logger.error(
-                f"Example keys: {list(example.keys()) if isinstance(example, dict) else 'Not a dict'}"
-            )
-            logger.error(f"Field mappings: {field_mappings}")
             return {"messages": []}
 
     def _convert_single_example_prompt_only(
@@ -258,15 +260,17 @@ class FormatConverter:
             {
                 "prompt": [
                     {"role": "system", "content": [{"type": "text", "text": "System message"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "User prompt"}]}
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "User prompt"}]}
                 ],
                 "answer": "Expected answer",
-                "reasoning": "Optional reasoning"
+                "reasoning": "Optional reasoning",
+                "images": [<PIL.Image.Image object>, ...]
             }
             ```
         """
         try:
             prompt_messages: List[Dict[str, Any]] = []
+            all_images: List[Any] = []
             result = {}
 
             # System message for the prompt
@@ -275,16 +279,17 @@ class FormatConverter:
             if sys_msg:
                 prompt_messages.append(sys_msg)
 
-            # User message (contains the actual prompt + images if multimodal)
-            user_msg = self._create_user_message(
+            user_msg, user_images = self._create_user_message(
                 example, field_mappings, is_multimodal=is_multimodal
             )
             if user_msg:
                 prompt_messages.append(user_msg)
+                all_images.extend(user_images)
 
-            # The prompt field is required
             if prompt_messages:
                 result["prompt"] = prompt_messages
+                if is_multimodal:
+                    result["images"] = all_images
             else:
                 logger.warning("No prompt content found in example")
                 return {}
@@ -302,10 +307,6 @@ class FormatConverter:
 
         except Exception as e:
             logger.error(f"Failed to convert single example to prompt-only: {e}")
-            logger.error(
-                f"Example keys: {list(example.keys()) if isinstance(example, dict) else 'Not a dict'}"
-            )
-            logger.error(f"Field mappings: {field_mappings}")
             return {}
 
     def _convert_single_example_preference(
@@ -341,7 +342,7 @@ class FormatConverter:
                     "role": "user",
                     "content": [
                         { "type": "text", "text": "What color is the sky?" },
-                        { "type": "image", "image": "<base64 or image object>" }
+                        { "type": "image"}
                     ]
                 }
             ],
@@ -356,21 +357,30 @@ class FormatConverter:
                     "role": "assistant",
                     "content": [{ "type": "text", "text": "It is green." }]
                 }
-            ]
+            ],
+            "images": [<PIL.Image.Image object>, ...]
         }
         ```
         """
         try:
             result = {}
+            prompt_messages: List[Dict[str, Any]] = []
+            all_images: List[Any] = []
 
-            # User message (contains the actual prompt + images if multimodal)
-            user_msg = self._create_user_message(
+            system_msg = self._create_system_message(example, field_mappings)
+            if system_msg:
+                prompt_messages.append(system_msg)
+
+            user_msg, user_images = self._create_user_message(
                 example, field_mappings, is_multimodal=is_multimodal
             )
+            prompt_messages.append(user_msg)
+            all_images.extend(user_images)
 
-            # The prompt field is required
             if user_msg:
-                result["prompt"] = [user_msg]
+                result["prompt"] = prompt_messages
+                if is_multimodal:
+                    result["images"] = all_images
             else:
                 logger.warning("No prompt content found in example")
                 return {}
@@ -418,6 +428,152 @@ class FormatConverter:
             )
             logger.error(f"Field mappings: {field_mappings}")
             return {}
+
+    def _convert_batch_examples(
+        self,
+        batch: Dict[str, List],
+        field_mappings: Dict[str, Dict[str, Any]],
+        is_multimodal: bool = False,
+    ) -> Dict[str, List]:
+        """
+        Convert a batch of examples to ChatML format.
+
+        This is the batched version of _convert_single_example for better performance.
+
+        Args:
+            batch: Dictionary where keys are column names and values are lists of values for the batch
+            field_mappings: Field mapping configuration
+            is_multimodal: Whether dataset contains images
+
+        Returns:
+            Dict with 'messages' and optionally 'images' keys, each containing lists
+        """
+        batch_size = len(batch[next(iter(batch))])
+
+        # Initialize result structures
+        messages_batch = []
+        images_batch = [] if is_multimodal else None
+
+        # Process each example in the batch
+        for i in range(batch_size):
+            # Extract single example from batch
+            example = {key: values[i] for key, values in batch.items()}
+
+            # Use existing single example converter
+            result = self._convert_single_example(
+                example, field_mappings, is_multimodal
+            )
+
+            # Collect results
+            messages_batch.append(result.get("messages", []))
+            if is_multimodal and "images" in result:
+                images_batch.append(result.get("images", []))
+            elif is_multimodal:
+                images_batch.append([])
+
+        # Return batch format
+        result_batch = {"messages": messages_batch}
+        if is_multimodal:
+            result_batch["images"] = images_batch
+
+        return result_batch
+
+    def _convert_batch_examples_prompt_only(
+        self,
+        batch: Dict[str, List],
+        field_mappings: Dict[str, Dict[str, Any]],
+        is_multimodal: bool = False,
+    ) -> Dict[str, List]:
+        """
+        Convert a batch of examples to prompt-only format.
+
+        Args:
+            batch: Dictionary where keys are column names and values are lists of values for the batch
+            field_mappings: Field mapping configuration
+            is_multimodal: Whether dataset contains images
+
+        Returns:
+            Dict with batch results containing prompt, images, and additional fields
+        """
+        batch_size = len(batch[next(iter(batch))])
+
+        # Initialize result structures - find all possible fields from field_mappings
+        result_batch = {"prompt": []}
+        if is_multimodal:
+            result_batch["images"] = []
+
+        # Find additional fields (non-special fields)
+        special_fields = {"system_field", "user_field"}
+        additional_fields = [
+            key for key in field_mappings.keys() if key not in special_fields
+        ]
+        for field in additional_fields:
+            result_batch[field] = []
+
+        # Process each example in the batch
+        for i in range(batch_size):
+            # Extract single example from batch
+            example = {key: values[i] for key, values in batch.items()}
+
+            # Use existing single example converter
+            result = self._convert_single_example_prompt_only(
+                example, field_mappings, is_multimodal
+            )
+
+            # Collect results
+            result_batch["prompt"].append(result.get("prompt", []))
+            if is_multimodal:
+                result_batch["images"].append(result.get("images", []))
+
+            # Collect additional fields
+            for field in additional_fields:
+                result_batch[field].append(result.get(field, ""))
+
+        return result_batch
+
+    def _convert_batch_examples_preference(
+        self,
+        batch: Dict[str, List],
+        field_mappings: Dict[str, Dict[str, Any]],
+        is_multimodal: bool = False,
+    ) -> Dict[str, List]:
+        """
+        Convert a batch of examples to preference format.
+
+        Args:
+            batch: Dictionary where keys are column names and values are lists of values for the batch
+            field_mappings: Field mapping configuration
+            is_multimodal: Whether dataset contains images
+
+        Returns:
+            Dict with batch results containing prompt, chosen, rejected, and optionally images
+        """
+        batch_size = len(batch[next(iter(batch))])
+
+        # Initialize result structures
+        result_batch = {"prompt": [], "chosen": [], "rejected": []}
+        if is_multimodal:
+            result_batch["images"] = []
+
+        # Process each example in the batch
+        for i in range(batch_size):
+            # Extract single example from batch
+            example = {key: values[i] for key, values in batch.items()}
+
+            # Use existing single example converter
+            result = self._convert_single_example_preference(
+                example, field_mappings, is_multimodal
+            )
+
+            # Collect results
+            result_batch["prompt"].append(result.get("prompt", []))
+            result_batch["chosen"].append(result.get("chosen", []))
+            result_batch["rejected"].append(result.get("rejected", []))
+
+            if is_multimodal:
+                result_batch["images"].append(result.get("images", []))
+
+        return result_batch
 
     def _extract_text_content(
         self, example: Dict, field_mappings: Dict, field_key: str
@@ -477,6 +633,7 @@ class FormatConverter:
     ) -> List[Dict[str, Any]]:
         """
         Extract and format multimodal content (text + images) for a specific role.
+        DEPRECATED
 
         This method extracts both text and image content from the input example
         and formats it for vision ChatML format. Images are only added to user messages.
@@ -492,24 +649,20 @@ class FormatConverter:
         Example:
             >>> example = {"question": "What is in this image?", "image": PIL_Image}
             >>> field_mappings = {
-            ...     "user_field": {"type": "column", "value": "question"},
-            ...     "image_field": {"type": "image", "value": "image"}
+            ...     "user_field": [
+            ...         {"type": "column", "value": "question"},
+            ...         {"type": "image", "value": "image"}
+            ...     ]
             ... }
             >>> content = converter._extract_multimodal_content(example, field_mappings, "user")
             >>> [
             ...     {"type": "text", "text": "What is in this image?"},
-            ...     {"type": "image", "image": PIL_Image_object}
+            ...     {"type": "image"}
             ... ]
 
-        NOTE: After serialisation (parquet) the `PIL_Image_object` becomes:
-
-            "image": {
-                "bytes": "base64_encoded_image_data",
-                "path": null
-            }
-
-        When bytes cannot be used (e.g. API response) we convert to base64 string.
-        Otherwise, we keep the PIL Image object (e.g. for training).
+        NOTE: In the new format, images are stored separately in the "images" field as PIL objects.
+        Content items use {"type": "image"} as placeholders.
+        When converting for API responses, the separate images are converted to base64 strings.
         """
         content_items = []
 
@@ -704,11 +857,9 @@ class FormatConverter:
 
     def _create_user_message(
         self, example: Dict, field_mappings: Dict, is_multimodal: bool = False
-    ) -> Optional[Dict]:
+    ) -> Tuple[Optional[Dict], List[Any]]:
         """
-        Create a user message from the example data.
-
-        Supports both new format (List[Dict] with mixed content) and backward compatibility (single Dict).
+        Create a user message, separating content from image data.
 
         Args:
             example (Dict): The input example
@@ -716,119 +867,73 @@ class FormatConverter:
             is_multimodal (bool): Whether to include image content
 
         Returns:
-            Optional[Dict]: User message dict or None if no content
+            A tuple containing:
+            - Optional[Dict]: User message dict with image placeholders.
+            - List[Any]: List of PIL Image objects for the separate images field.
         """
         user_field_config = field_mappings.get("user_field")
         if not user_field_config:
-            return None
+            return None, []
 
-        # Handle new format: List[Dict] with mixed content (text and images)
-        if isinstance(user_field_config, list):
-            content_items = []
+        content_items = []
+        image_items = []  # Collect actual PIL images here
 
-            for item in user_field_config:
-                if item.get("type") == "template":
-                    # Handle template
-                    try:
-                        template_vars = {
-                            key: str(value) for key, value in example.items()
-                        }
-                        text = item["value"].format(**template_vars)
+        # The new format expects user_field to be a list of content parts
+        if not isinstance(user_field_config, list):
+            logger.warning(
+                "user_field is not a list, attempting backward compatible conversion."
+            )
+            # Fallback for old single-dict format might be needed or deprecated
+            # For this migration, we focus on the new list-based format.
+            user_field_config = [user_field_config]
+
+        for item in user_field_config:
+            item_type = item.get("type")
+            item_value = item.get("value")
+
+            if item_type == "template":
+                try:
+                    template_vars = {key: str(value) for key, value in example.items()}
+                    text = item_value.format(**template_vars)
+                    text = self.whitespace_pattern.sub(" ", text).strip()
+                    if text:
+                        content_items.append({"type": "text", "text": text})
+                except (KeyError, ValueError) as e:
+                    logger.warning(f"Template formatting failed: {e}")
+
+            elif item_type == "column":
+                if item_value and item_value in example:
+                    content = example[item_value]
+                    pre_formatted = self._extract_pre_formatted_message(content)
+                    if pre_formatted and isinstance(pre_formatted.get("content"), list):
+                        content_items.extend(pre_formatted["content"])
+                    else:
+                        text = str(content)
                         text = self.whitespace_pattern.sub(" ", text).strip()
                         if text:
                             content_items.append({"type": "text", "text": text})
-                    except (KeyError, ValueError) as e:
-                        logger.warning(f"Template formatting failed: {e}")
 
-                elif item.get("type") == "column":
-                    # Handle column reference
-                    column_name = item.get("value")
-                    if column_name and column_name in example:
-                        content = example[column_name]
+            elif item_type == "image" and is_multimodal:
+                if item_value and item_value in example:
+                    image_data = example[item_value]
+                    if image_data is not None:
+                        processed_image = self._process_image_field(image_data)
+                        if processed_image:
+                            # NEW FORMAT: Add placeholder to content, store actual image separately
+                            content_items.append({"type": "image"})
+                            image_items.append(processed_image)
 
-                        # Check if it's pre-formatted
-                        pre_formatted = self._extract_pre_formatted_message(content)
-                        if pre_formatted:
-                            # Extract content from pre-formatted message
-                            if isinstance(pre_formatted.get("content"), list):
-                                content_items.extend(pre_formatted["content"])
-                            else:
-                                text = str(pre_formatted.get("content", ""))
-                                if text.strip():
-                                    content_items.append({"type": "text", "text": text})
-                        else:
-                            # Regular string content
-                            text = str(content)
-                            text = self.whitespace_pattern.sub(" ", text).strip()
-                            if text:
-                                content_items.append({"type": "text", "text": text})
+        # Filter out empty content
+        content_items = [
+            item
+            for item in content_items
+            if item.get("text", "").strip() or item.get("type") == "image"
+        ]
 
-                elif item.get("type") == "image":
-                    # Handle image
-                    image_column = item.get("value")
-                    if image_column and image_column in example:
-                        image_data = example[image_column]
-                        if image_data is not None:
-                            processed_image = self._process_image_field(image_data)
-                            if processed_image:
-                                content_items.append(
-                                    {"type": "image", "image": processed_image}
-                                )
+        if content_items:
+            return {"role": "user", "content": content_items}, image_items
 
-            # Filter out empty content and return
-            content_items = [
-                item
-                for item in content_items
-                if (item.get("text") and item.get("text").strip()) or item.get("image")
-            ]
-
-            if content_items:
-                return {"role": "user", "content": content_items}
-            return None
-
-        # Handle backward compatibility: single Dict
-        else:
-            # Check for pre-formatted message first
-            if (
-                user_field_config.get("type") == "column"
-                and user_field_config["value"] in example
-            ):
-                content = example[user_field_config["value"]]
-                pre_formatted = self._extract_pre_formatted_message(content)
-                if pre_formatted:
-                    return pre_formatted
-
-            # Handle regular content using existing logic
-            if is_multimodal:
-                user_content = self._extract_multimodal_content(
-                    example, field_mappings, "user"
-                )
-            else:
-                text_content = self._extract_text_content(
-                    example, field_mappings, "user_field"
-                )
-                user_content = (
-                    [{"type": "text", "text": text_content}] if text_content else []
-                )
-
-            # Filter out empty text content
-            if is_multimodal:
-                user_content = [
-                    item
-                    for item in user_content
-                    if (item.get("text") and item.get("text").strip())
-                    or item.get("image")
-                ]
-            else:
-                user_content = [
-                    item
-                    for item in user_content
-                    if item.get("text") and item.get("text").strip()
-                ]
-
-            if user_content:
-                return {"role": "user", "content": user_content}
-            return None
+        return None, []
 
     def _create_assistant_message(
         self, example: Dict, field_mappings: Dict

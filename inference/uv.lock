@@ -924,7 +924,7 @@ requires-dist = [
     { name = "accelerate", specifier = "==1.4.0" },
     { name = "bert-score", specifier = ">=0.3.13" },
     { name = "bitsandbytes", specifier = "==0.47.0" },
-    { name = "datasets", specifier = ">=3.4.1" },
+    { name = "datasets", specifier = ">=3.6.0" },
     { name = "evaluate", specifier = "==0.4.3" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "firebase-admin", specifier = ">=6.0.0" },
