@@ -7,6 +7,7 @@ from schema import (
     NoSplitConfig,
     HFSplitConfig,
 )
+from .parsers import *
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ class DatasetLoader:
                 methods for accessing and managing stored datasets.
         """
         self.storage = storage
+        self.parsers : dict[str, BaseParser] = {
+            "pdf": PDFParser(),
+            "docx": DOCXParser(),
+            "pptx": PPTParser(),
+            "html": HTMLParser(),
+        }
 
     def load_dataset(
         self,
@@ -141,13 +148,23 @@ class DatasetLoader:
             and file_type != "xlsx"
             and file_type != "xls"
             and file_type != "txt"
+            and file_type != "pdf"
+            and file_type != "html"
+            and file_type != "docx"
+            and file_type != "pptx"
         ):
             raise ValueError("Invalid file type")
+
+        if file_type in self.parsers:
+            parser = self.parsers[file_type]
+            parsed_dataset = parser.parse(file_path)
+            dataset = DatasetDict({"train": parsed_dataset})
+        else:
+            dataset = load_dataset(file_type, data_files=file_path)
 
         # No split configuration - return all data as train split
         if isinstance(config.split_config, NoSplitConfig):
             sample_size = config.split_config.sample_size
-            dataset = load_dataset(file_type, data_files=file_path)
 
             if sample_size and dataset["train"].num_rows > sample_size:
                 shuffled_dataset = (
@@ -161,8 +178,6 @@ class DatasetLoader:
         elif isinstance(config.split_config, ManualSplitConfig):
             sample_size = config.split_config.sample_size
             test_size = config.split_config.test_size
-
-            dataset = load_dataset(file_type, data_files=file_path)
             train_dataset = dataset["train"]
 
             # if sample_size and test_size are provided, sample and split into train/test

@@ -27,7 +27,11 @@ class DatasetHandler:
     - JSONL files (.jsonl)
     - Excel files (.xlsx, .xls)
     - Parquet files (.parquet)
-
+    - PDF files (.pdf)
+    - Word documents (.docx)
+    - PowerPoint presentations (.pptx)
+    - HTML files (.html)
+    
     Attributes:
         storage (StorageInterface): An interface for storage operations
         supported_formats (Set[str]): Set of supported file extensions
@@ -55,6 +59,10 @@ class DatasetHandler:
             "xlsx",
             "xls",
             "parquet",
+            "pdf",
+            "docx",
+            "pptx",
+            "html",
         }
 
     def _is_allowed_file(self, filename: str) -> bool:
