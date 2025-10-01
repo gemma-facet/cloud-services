@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-storage_type = os.getenv("STORAGE_TYPE", "gcs")  # "gcs" or "local" | defualts to "gcs" 
+storage_type = os.getenv("STORAGE_TYPE", "gcs")  # "gcs" or "local" | defualts to "gcs"
 
 if storage_type == "gcs":
     bucket_name = os.getenv("GCS_DATA_BUCKET_NAME", "gemma-dataset-bucket")
@@ -112,8 +112,8 @@ async def upload_dataset(
     """Upload a dataset file to storage"""
     try:
         file_content = await file.read()
-        filetype = file.filename.rsplit(".",1)[1].lower()
-        content_type = MIME_TYPES[filetype]  
+        filetype = file.filename.rsplit(".", 1)[1].lower()
+        content_type = MIME_TYPES[filetype]
         result = dataset_service.upload_dataset(
             file_data=file_content,
             filename=file.filename or "unknown",
@@ -130,7 +130,7 @@ async def upload_dataset(
         }
 
         dataset_tracker.track_raw_dataset(raw_metadata)
-    
+
         return result
 
     except Exception as e:

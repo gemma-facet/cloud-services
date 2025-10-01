@@ -16,6 +16,7 @@ MIME_TYPES = {
     "parquet": "application/vnd.apache.parquet",
 }
 
+
 class ProcessingMode(str, Enum):
     """
     Specifies the preprocessing mode to format the dataset for a specific fine-tuning task.
@@ -172,4 +173,3 @@ class DatasetDeleteResponse(BaseModel):
     message: str
     deleted_files_count: int
     deleted_resources: Optional[List[str]] = None
-

@@ -3,6 +3,7 @@ from datasets import Dataset
 from .base import BaseParser
 import docx
 
+
 class DOCXParser(BaseParser):
     """Parser for Microsoft Word (DOCX) documents."""
 
@@ -19,11 +20,11 @@ class DOCXParser(BaseParser):
         try:
             doc = docx.Document(file_stream)
             data = []
-            
+
             for p in doc.paragraphs:
                 if p.text:
                     data.append({"text": p.text.strip()})
-            
+
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:

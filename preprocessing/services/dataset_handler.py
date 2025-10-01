@@ -9,6 +9,7 @@ from datasets import DatasetDict
 import pandas as pd
 import io
 from .parsers import *
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +32,7 @@ class DatasetHandler:
     - Word documents (.docx)
     - PowerPoint presentations (.pptx)
     - HTML files (.html)
-    
+
     Attributes:
         storage (StorageInterface): An interface for storage operations
         supported_formats (Set[str]): Set of supported file extensions
@@ -64,20 +65,20 @@ class DatasetHandler:
             "pptx",
             "html",
         }
-        self.parsers : dict[str, BaseParser] = {
+        self.parsers: dict[str, BaseParser] = {
             "pdf": PDFParser(),
             "docx": DOCXParser(),
             "pptx": PPTParser(),
             "html": HTMLParser(),
         }
-        self.pandas_readers : dict[str, callable] = {
+        self.pandas_readers: dict[str, callable] = {
             "csv": pd.read_csv,
             "json": pd.read_json,
             "jsonl": lambda f: pd.read_json(f, lines=True),
             "xlsx": pd.read_excel,
             "xls": pd.read_excel,
             "parquet": pd.read_parquet,
-            "txt": lambda f: pd.DataFrame(f.readlines(), columns=["text"]), 
+            "txt": lambda f: pd.DataFrame(f.readlines(), columns=["text"]),
         }
 
     def _is_allowed_file(self, filename: str) -> bool:
@@ -175,7 +176,7 @@ class DatasetHandler:
 
             sample = []
             num_examples = 0
-        
+
             if file_type in self.parsers:
                 parser = self.parsers[file_type]
                 dataset = parser.parse(io.BytesIO(file_data))
@@ -190,10 +191,11 @@ class DatasetHandler:
                 num_examples = len(df)
                 if num_examples > 0:
                     sample = df.head(5).to_dict(orient="records")
-            
 
             else:
-                raise NotImplementedError(f"Parsing for file type '{file_type}' is not supported.")
+                raise NotImplementedError(
+                    f"Parsing for file type '{file_type}' is not supported."
+                )
 
             return DatasetUploadResponse(
                 dataset_id=file_id,

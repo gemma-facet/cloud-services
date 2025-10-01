@@ -39,7 +39,7 @@ class DatasetLoader:
                 methods for accessing and managing stored datasets.
         """
         self.storage = storage
-        self.parsers : dict[str, BaseParser] = {
+        self.parsers: dict[str, BaseParser] = {
             "pdf": PDFParser(),
             "docx": DOCXParser(),
             "pptx": PPTParser(),
@@ -158,13 +158,15 @@ class DatasetLoader:
         if file_type in self.parsers:
             parser = self.parsers[file_type]
             file_content = self.storage.download_binary_data(files[0])
-            parsed_dataset = parser.parse(io.BytesIO(file_content)) # gives the file object stream to the parser
-            dataset = DatasetDict({"train": parsed_dataset})        
+            parsed_dataset = parser.parse(
+                io.BytesIO(file_content)
+            )  # gives the file object stream to the parser
+            dataset = DatasetDict({"train": parsed_dataset})
         else:
             if file_type == "txt":
                 file_type = "text"
                 dataset = load_dataset(file_type, data_files=file_path)
-            else:    
+            else:
                 dataset = load_dataset(file_type, data_files=file_path)
 
         # No split configuration - return all data as train split
