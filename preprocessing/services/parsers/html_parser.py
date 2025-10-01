@@ -1,3 +1,4 @@
+import io
 from datasets import Dataset
 from .base import BaseParser
 from bs4 import BeautifulSoup
@@ -5,20 +6,19 @@ from bs4 import BeautifulSoup
 class HTMLParser(BaseParser):
     """Parser for HTML files and web pages"""
     
-    def parse(self, file_path: str) -> Dataset:
-        """Parse an HTML file into a Dataset of text blocks
+    def parse(self, file_stream: io.BytesIO) -> Dataset:
+        """Parse an HTML file from an in-memory stream.
         
         Args:
-            file_path: Path to the HTML file or URL
+            file_stream: An in-memory binary stream (e.g., io.BytesIO)
+                containing the HTML file content.
             
         Returns:
             Dataset: rows with tag and text
         """
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                html_content = f.read()
 
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(file_stream, 'html.parser')
 
             # Remove script and style elements
             for script in soup(['script', 'style']):

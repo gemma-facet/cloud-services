@@ -1,3 +1,4 @@
+import io
 from datasets import Dataset
 from .base import BaseParser
 import docx
@@ -5,25 +6,24 @@ import docx
 class DOCXParser(BaseParser):
     """Parser for Microsoft Word (DOCX) documents."""
 
-    def parse(self, file_path: str) -> Dataset:
-        """Parse a DOCX file, creating one row per paragraph or table cell.
+    def parse(self, file_stream: io.BytesIO) -> Dataset:
+        """Parse a DOCX file from an in-memory stream.
 
         Args:
-            file_path: Path to the DOCX file.
+            file_stream: An in-memory binary stream (e.g., io.BytesIO)
+                containing the DOCX file content.
 
         Returns:
             Dataset: with a 'text' column.
         """
         try:
-            doc = docx.Document(file_path)
+            doc = docx.Document(file_stream)
             data = []
             
-           
             for p in doc.paragraphs:
                 if p.text:
                     data.append({"text": p.text.strip()})
             
-           
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:

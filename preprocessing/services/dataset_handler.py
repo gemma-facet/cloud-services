@@ -8,7 +8,7 @@ from schema import DatasetUploadResponse, PreprocessingConfig
 from datasets import DatasetDict
 import pandas as pd
 import io
-
+from .parsers import *
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +63,21 @@ class DatasetHandler:
             "docx",
             "pptx",
             "html",
+        }
+        self.parsers : dict[str, BaseParser] = {
+            "pdf": PDFParser(),
+            "docx": DOCXParser(),
+            "pptx": PPTParser(),
+            "html": HTMLParser(),
+        }
+        self.pandas_readers : dict[str, callable] = {
+            "csv": pd.read_csv,
+            "json": pd.read_json,
+            "jsonl": lambda f: pd.read_json(f, lines=True),
+            "xlsx": pd.read_excel,
+            "xls": pd.read_excel,
+            "parquet": pd.read_parquet,
+            "txt": lambda f: pd.DataFrame(f.readlines(), columns=["text"]), 
         }
 
     def _is_allowed_file(self, filename: str) -> bool:
@@ -144,6 +159,7 @@ class DatasetHandler:
                 )
 
             file_id = str(uuid.uuid4())
+            file_type = filename.rsplit(".", 1)[1].lower()
             secure_name = secure_filename(filename)
             blob_name = f"raw_datasets/{file_id}_{secure_name}"
 
@@ -153,18 +169,31 @@ class DatasetHandler:
                 "upload_type": "user_upload",
                 **(metadata or {}),
             }
-
             storage_path = self.storage.upload_data(
                 file_data, blob_name, upload_metadata
             )
 
-            sample = (
-                pd.read_csv(io.BytesIO(file_data)).head(5).to_dict(orient="records")
-            )
+            sample = []
+            num_examples = 0
+        
+            if file_type in self.parsers:
+                parser = self.parsers[file_type]
+                dataset = parser.parse(io.BytesIO(file_data))
+                num_examples = len(dataset)
+                sample_size = min(5, num_examples)
+                if sample_size > 0:
+                    sample = dataset.select(range(sample_size)).to_list()
 
-            num_examples = len(pd.read_csv(io.BytesIO(file_data)))
+            elif file_type in self.pandas_readers:
+                reader = self.pandas_readers[file_type]
+                df = reader(io.BytesIO(file_data))
+                num_examples = len(df)
+                if num_examples > 0:
+                    sample = df.head(5).to_dict(orient="records")
+            
 
-            print(sample)
+            else:
+                raise NotImplementedError(f"Parsing for file type '{file_type}' is not supported.")
 
             return DatasetUploadResponse(
                 dataset_id=file_id,
@@ -172,7 +201,7 @@ class DatasetHandler:
                 gcs_path=storage_path,
                 size_bytes=len(file_data),
                 sample=sample,
-                columns=list(sample[0].keys()),
+                columns=list(sample[0].keys()) if sample else [],
                 num_examples=num_examples,
             )
 

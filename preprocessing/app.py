@@ -14,6 +14,7 @@ from schema import (
     DatasetsInfoResponse,
     DatasetInfoResponse,
     DatasetDeleteResponse,
+    MIME_TYPES,
 )
 
 project_id = os.getenv("PROJECT_ID")
@@ -37,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-storage_type = os.getenv("STORAGE_TYPE", "gcs")  # "gcs" or "local"
+storage_type = os.getenv("STORAGE_TYPE", "gcs")  # "gcs" or "local" | defualts to "gcs" 
 
 if storage_type == "gcs":
     bucket_name = os.getenv("GCS_DATA_BUCKET_NAME", "gemma-dataset-bucket")
@@ -111,11 +112,12 @@ async def upload_dataset(
     """Upload a dataset file to storage"""
     try:
         file_content = await file.read()
-
+        filetype = file.filename.rsplit(".",1)[1].lower()
+        content_type = MIME_TYPES[filetype]  
         result = dataset_service.upload_dataset(
             file_data=file_content,
             filename=file.filename or "unknown",
-            metadata={"content_type": file.content_type, "user_id": current_user_id},
+            metadata={"content_type": content_type, "user_id": current_user_id},
         )
         # Track raw dataset metadata
         raw_metadata = {
@@ -123,11 +125,12 @@ async def upload_dataset(
             "gcs_path": result.gcs_path,
             "user_id": current_user_id,
             "filename": result.filename,
-            "content_type": file.content_type or "unknown",
+            "content_type": content_type or "unknown",
             "size_bytes": result.size_bytes,
         }
-        dataset_tracker.track_raw_dataset(raw_metadata)
 
+        dataset_tracker.track_raw_dataset(raw_metadata)
+    
         return result
 
     except Exception as e:

@@ -1,4 +1,4 @@
-import os
+import io
 from typing import Dict, Any
 from datasets import Dataset
 from .base import BaseParser
@@ -7,17 +7,18 @@ from pptx import Presentation
 class PPTParser(BaseParser):
     """Parser for PowerPoint presentations"""
     
-    def parse(self, file_path: str) -> Dataset:
-        """Parse a PPTX file into plain text
+    def parse(self, file_stream: io.BytesIO) -> Dataset:
+        """Parse a PPTX file from an in-memory stream.
         
         Args:
-            file_path: Path to the PPTX file
+            file_stream: An in-memory binary stream (e.g., io.BytesIO)
+                containing the PPTX file content.
             
         Returns:
-            A Hugging Face Dataset with 'slide_number' and 'text' columns.   
+            A Hugging Face Dataset with 'slide_number' and 'text' columns.
         """
         try:
-            prs = Presentation(file_path)
+            prs = Presentation(file_stream)
 
     
             data = []

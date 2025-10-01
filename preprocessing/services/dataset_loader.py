@@ -7,6 +7,7 @@ from schema import (
     NoSplitConfig,
     HFSplitConfig,
 )
+import io
 from .parsers import *
 
 logger = logging.getLogger(__name__)
@@ -137,9 +138,8 @@ class DatasetLoader:
 
         file_path = f"{self.storage.base_path}/{files[0]}"
         filename = file_path.split("_", 1)[1]
-
         # find the type of file
-        file_type = filename.split(".")[-1]
+        file_type = filename.rsplit(".", 1)[1].lower()
         if (
             file_type != "csv"
             and file_type != "json"
@@ -157,10 +157,15 @@ class DatasetLoader:
 
         if file_type in self.parsers:
             parser = self.parsers[file_type]
-            parsed_dataset = parser.parse(file_path)
-            dataset = DatasetDict({"train": parsed_dataset})
+            file_content = self.storage.download_binary_data(files[0])
+            parsed_dataset = parser.parse(io.BytesIO(file_content)) # gives the file object stream to the parser
+            dataset = DatasetDict({"train": parsed_dataset})        
         else:
-            dataset = load_dataset(file_type, data_files=file_path)
+            if file_type == "txt":
+                file_type = "text"
+                dataset = load_dataset(file_type, data_files=file_path)
+            else:    
+                dataset = load_dataset(file_type, data_files=file_path)
 
         # No split configuration - return all data as train split
         if isinstance(config.split_config, NoSplitConfig):

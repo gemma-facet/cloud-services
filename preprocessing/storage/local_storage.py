@@ -70,9 +70,8 @@ class LocalStorageManager(StorageInterface):
             files = []
             for file_path in self.base_path.rglob("*"):
                 if file_path.is_file() and not file_path.name.endswith(".meta"):
-                    relative_path = str(file_path.relative_to(self.base_path))
+                    relative_path = file_path.relative_to(self.base_path).as_posix()
                     if prefix == "" or relative_path.startswith(prefix):
-                        relative_path = relative_path.replace("\\", "/")
                         files.append(relative_path)
             return sorted(files)
         except Exception as e:
