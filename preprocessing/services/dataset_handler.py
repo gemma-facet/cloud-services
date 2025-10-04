@@ -71,15 +71,15 @@ class DatasetHandler:
             "pptx": PPTParser(),
             "html": HTMLParser(),
         }
-        self.pandas_readers: dict[str, callable] = {
-            "csv": pd.read_csv,
-            "json": pd.read_json,
-            "jsonl": lambda f: pd.read_json(f, lines=True),
-            "xlsx": pd.read_excel,
-            "xls": pd.read_excel,
-            "parquet": pd.read_parquet,
-            "txt": lambda f: pd.DataFrame(f.readlines(), columns=["text"]),
-        }
+        self.read_csv_formats = {
+            "txt",
+            "csv",
+            "json",
+            "jsonl",
+            "xlsx",
+            "xls",
+            "parquet"
+            }
 
     def _is_allowed_file(self, filename: str) -> bool:
         """
@@ -185,13 +185,11 @@ class DatasetHandler:
                 if sample_size > 0:
                     sample = dataset.select(range(sample_size)).to_list()
 
-            elif file_type in self.pandas_readers:
-                reader = self.pandas_readers[file_type]
-                df = reader(io.BytesIO(file_data))
-                num_examples = len(df)
-                if num_examples > 0:
-                    sample = df.head(5).to_dict(orient="records")
-
+            elif file_type in self.read_csv_formats:
+                sample = (
+                    pd.read_csv(io.BytesIO(file_data)).head(5).to_dict(orient="records")
+                ) 
+                num_examples = len(pd.read_csv(io.BytesIO(file_data)))    
             else:
                 raise NotImplementedError(
                     f"Parsing for file type '{file_type}' is not supported."

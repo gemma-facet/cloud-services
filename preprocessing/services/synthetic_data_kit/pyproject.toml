@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "synthetic-data-kit"
+version = "0.0.5b1"
+description = "Tool for generating high quality Synthetic datasets"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+dependencies = [
+    "datasets>=2.14.0",
+    "pdfminer-six>=20221105",
+    "pydantic>=2.4.0",
+    "python-docx>=0.8.11",
+    "python-pptx>=0.6.21",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "rich>=13.4.2",
+    "typer>=0.9.0",
+    "openai>=1.0.0",
+    "beautifulsoup4>=4.12.0",
+    "pylance",
+    "PyMuPDF"
+]
+
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "beautifulsoup4>=4.12.0",
+    "PyMuPDF"
+]

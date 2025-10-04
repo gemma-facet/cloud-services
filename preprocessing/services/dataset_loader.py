@@ -7,8 +7,9 @@ from schema import (
     NoSplitConfig,
     HFSplitConfig,
 )
-import io
-from .parsers import *
+from .dataset_synthesizer import synthetic_data_pipline , config_path , api_base , model
+import os
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,6 @@ class DatasetLoader:
                 methods for accessing and managing stored datasets.
         """
         self.storage = storage
-        self.parsers: dict[str, BaseParser] = {
-            "pdf": PDFParser(),
-            "docx": DOCXParser(),
-            "pptx": PPTParser(),
-            "html": HTMLParser(),
-        }
 
     def load_dataset(
         self,
@@ -56,7 +51,7 @@ class DatasetLoader:
         """
         Load a dataset from the specified source.
 
-        This method supports loading datasets from three different sources:
+        This method supports loading datasets from two different sources:
         1. 'upload': Loads a user-uploaded dataset from storage
         2. 'huggingface': Loads a dataset from Hugging Face's dataset hub
 
@@ -135,7 +130,6 @@ class DatasetLoader:
         files = self.storage.list_files(prefix=f"raw_datasets/{dataset_id}_")
         if not files:
             raise FileNotFoundError("Uploaded dataset not found")
-
         file_path = f"{self.storage.base_path}/{files[0]}"
         filename = file_path.split("_", 1)[1]
         # find the type of file
@@ -155,20 +149,17 @@ class DatasetLoader:
         ):
             raise ValueError("Invalid file type")
 
-        if file_type in self.parsers:
-            parser = self.parsers[file_type]
-            file_content = self.storage.download_binary_data(files[0])
-            parsed_dataset = parser.parse(
-                io.BytesIO(file_content)
-            )  # gives the file object stream to the parser
-            dataset = DatasetDict({"train": parsed_dataset})
-        else:
-            if file_type == "txt":
-                file_type = "text"
-                dataset = load_dataset(file_type, data_files=file_path)
-            else:
-                dataset = load_dataset(file_type, data_files=file_path)
+        output_dir = os.path.join(self.storage.base_path,"processed_datasets")
+        dataset = synthetic_data_pipline(
+                file_path=file_path,
+                output_dir=output_dir,
+                config_path=config_path,
+                api_base=api_base,
+                model=model, 
+                
+        )
 
+        
         # No split configuration - return all data as train split
         if isinstance(config.split_config, NoSplitConfig):
             sample_size = config.split_config.sample_size
