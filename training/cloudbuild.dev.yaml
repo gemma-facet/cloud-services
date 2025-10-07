@@ -1,0 +1,39 @@
+# Cloud Build configuration for training service
+
+substitutions:
+  _REGION: "us-central1" # Default region
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/training-service:latest",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/training-service:latest",
+      ]
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      [
+        "run",
+        "deploy",
+        "training-service-staging",
+        "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/training-service:latest",
+        "--region=${_REGION}",
+        "--platform=managed",
+        "--memory=2Gi",
+        "--cpu=2",
+        "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets-staging,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models-staging,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs-staging",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
+      ]
+
+options:
+  machineType: "E2_HIGHCPU_8"

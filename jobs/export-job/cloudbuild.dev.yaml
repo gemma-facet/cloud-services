@@ -1,0 +1,42 @@
+substitutions:
+  _REGION: "us-central1" # Default region
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/export-job:latest",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/export-job:latest",
+      ]
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      [
+        "beta",
+        "run",
+        "jobs",
+        "update",
+        "export-job-staging",
+        "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/export-job:latest",
+        "--region=${_REGION}",
+        "--memory=32Gi",
+        "--cpu=8",
+        "--gpu=1",
+        "--task-timeout=3600",
+        "--max-retries=0",
+        "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets-staging,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models-staging,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs-staging",
+        "--set-env-vars=GCS_EXPORT_FILES_BUCKET_NAME=${PROJECT_ID}-files-staging",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
+      ]
+
+options:
+  machineType: "E2_HIGHCPU_32"
