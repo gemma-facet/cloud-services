@@ -1,37 +1,13 @@
-# Cloud Build configuration for training service
-# Usage: gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore
-# To use cached images: gcloud builds submit --config cloudbuild.yaml --ignore-file=.gcloudignore --substitutions=_USE_CACHE=true
-# Optionally using cached image from the artifact registry as in https://cloud.google.com/build/docs/optimize-builds/speeding-up-builds#yaml
+substitutions:
+  _ARTIFACT_REGISTRY_URL: "" # Full registry URL from Terraform (e.g., us-central1-docker.pkg.dev/project/repo)
 
 steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
-      [
-        "build",
-        "-t",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-service:latest",
-        ".",
-      ]
+      ["build", "-t", "${_ARTIFACT_REGISTRY_URL}/training-service:latest", "."]
 
   - name: "gcr.io/cloud-builders/docker"
-    args:
-      [
-        "push",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-service:latest",
-      ]
-
-  - name: "gcr.io/cloud-builders/gcloud"
-    args:
-      - "run"
-      - "deploy"
-      - "training-service"
-      - "--image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/training-service:latest"
-      - "--region=us-central1"
-      - "--platform=managed"
-      - "--memory=2Gi"
-      - "--cpu=2"
-      - "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs"
-      - "--set-env-vars=PROJECT_ID=$PROJECT_ID"
+    args: ["push", "${_ARTIFACT_REGISTRY_URL}/training-service:latest"]
 
 options:
   machineType: "E2_HIGHCPU_8"
