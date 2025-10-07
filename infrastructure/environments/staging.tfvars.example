@@ -1,0 +1,16 @@
+# =============================================================================
+# Staging Environment Configuration
+# =============================================================================
+
+project_id = "your-gcp-project-id-here"  # Replace with your actual project ID
+
+region = "us-central1"
+
+environment = "staging"
+
+# Environment-specific labels
+labels = {
+  project     = "gemma-fine-tuning"
+  managed-by  = "terraform"
+  environment = "staging"
+}

@@ -1,6 +1,6 @@
 # IaC for Gemma Fine-tuning Services
 
-You can use this Terraform setup to quickly deploy the Gemma fine-tuning services infrastructure on your own Google Cloud Platform project.
+You can use this Terraform setup to quickly deploy the Gemma fine-tuning services infrastructure on your own Google Cloud Platform project. This setup supports **multi-environment deployments** using Terraform workspaces.
 
 1. This only works with Google Cloud Platform (GCP). Open issue / PR if you want to add support for AWS/Azure!
 
@@ -10,7 +10,16 @@ You can use this Terraform setup to quickly deploy the Gemma fine-tuning service
 
 4. As the writing of this, certain APIs require billing to be enabled, so it's recommended to enable billing on your project first. We might consider adding 3 and 4 to the Terraform setup in the future.
 
-> [!NOTE] We provide `Makefile` (see below) to simplify the entire deployment process. We do not recommend using `terraform` command manually because the deployment takes multiple stages (setup + build + deploy).
+> [!NOTE] We provide `Makefile` (see below) to simplify the entire deployment process. We do not recommend using `terraform` command manually because the deployment takes multiple stages (setup + build + deploy), modules, and workspaces.
+
+## Environment Support
+
+This infrastructure uses **Terraform workspaces** for environment isolation:
+
+- **Staging**: Uses `staging` workspace - completely isolated state
+- **Production**: Uses `default` workspace - completely isolated state
+
+Both environments use the same resource names but are deployed to separate Terraform states, ensuring complete isolation. Use `ENV=staging` or `ENV=production` to specify the target environment.
 
 ## Quickstart
 
@@ -29,23 +38,25 @@ gcloud auth login
 gcloud config set project <your-project-id>
 ```
 
-3. **Edit variables**
-
-Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in your project details:
+3. **Edit environment variables**
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars
+# Edit staging configuration
+cp environments/staging.tfvars.example environments/staging.tfvars
+vim environments/staging.tfvars
+
+# Edit production configuration
+cp environments/production.tfvars.example environments/production.tfvars
+vim environments/production.tfvars
 ```
 
-> [!NOTE]
-> We use the project id you provided to create names for resources such as storage buckets and service account to ensure that they are globally unique. If you want to customize the names, edit the `main.tf` files in each module.
-
-4. **Deploy the infrastructure**
+4. **Deploy infrastructure**
 
 ```bash
-make init
-make full-deploy
-make output
+# Use ENV=production or ENV=staging
+make init ENV=staging
+make full-deploy ENV=staging
+make output ENV=staging
 ```
 
 `make full-deploy` performs the following steps:
@@ -76,28 +87,58 @@ NEXT_PUBLIC_FIREBASE_APP_ID=your-firebase-app-id
 
 We hope to automate the second step as well but cannot yet find a way to avoid needing the console.
 
+## How this works
+
+### Workspace Management
+
+> [!NOTE]
+> We use the project id you provided to create names for resources such as storage buckets and service account to ensure that they are globally unique. Terraform workspaces ensure staging and production deployments are completely isolated.
+
+**Key Benefits:**
+
+- **Complete Isolation**: Separate Terraform state files prevent any cross-environment conflicts
+- **Same Resource Names**: Both environments use identical resource names (e.g., `training-service`, `gemma-api`)
+- **Zero Production Risk**: Staging changes cannot accidentally affect production
+- **Simple Management**: Use `ENV=staging` or `ENV=production` to switch environments
+
+### Cloud Build Integration
+
+The make commands will automatically trigger Cloud Build as a build system using `cloudbuild.yaml` in each service directory to build and push docker images to the Artifact Registry for that workspace. ONLY builds are managed by cloud build, deployments are still managed by terraform. This is in contrast to manual deployment during dev, which can be done using `cloudbuild.dev.yaml` in each service directory.
+
+For manual builds (this only works for staging environment):
+
+```bash
+gcloud builds submit --config cloudbuild.dev.yaml --ignore-file .gcloudignore .
+```
+
 ## Available Commands
 
 ```bash
-make help          # Show all available commands
+make help          # Show all available commands with current environment
+
+# Environment Selection
+make <command> ENV=staging     # Deploy to staging workspace
+make <command> ENV=production  # Deploy to production workspace (default)
 
 # Prerequisites
-make init
-make check
+make init          # Initialize Terraform and setup workspace
+make check         # Check prerequisites
 
 # Build & Deploy
-make build          # Build all containers with Cloud Build
-make deploy         # Deploy infrastructure with Terraform
-make deploy-core    # Deploy core infrastructure only
+make build         # Build all containers for current environment
+make deploy        # Deploy infrastructure with Terraform
+make deploy-core   # Deploy core infrastructure only
 make deploy-services # Deploy microservices only
-make full-deploy    # Complete workflow: build + deploy
+make full-deploy   # Complete workflow: core + build + services
 
 # Management
-make plan           # Plan infrastructure changes
-make plan-core      # Plan core infrastructure changes
-make plan-services  # Plan microservices changes
-make output         # Show infrastructure outputs
-make destroy        # Destroy all infrastructure
+make plan          # Plan infrastructure changes
+make plan-core     # Plan core infrastructure changes
+make plan-services # Plan microservices changes
+make output        # Show infrastructure outputs
+make destroy       # Destroy all infrastructure
+make workspace-list # List all Terraform workspaces
+make workspace-show # Show current workspace
 ```
 
 The infrastructure is organized into modular components:

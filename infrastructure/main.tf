@@ -40,10 +40,10 @@ module "storage" {
   project_id         = var.project_id
   region             = var.region
   labels             = var.labels
-  data_bucket_name   = "${var.project_id}-datasets"
-  export_bucket_name = "${var.project_id}-models"
-  config_bucket_name = "${var.project_id}-configs"
-  files_bucket_name  = "${var.project_id}-files"
+  data_bucket_name   = terraform.workspace == "default" ? "${var.project_id}-datasets" : "${var.project_id}-datasets-${terraform.workspace}"
+  export_bucket_name = terraform.workspace == "default" ? "${var.project_id}-models" : "${var.project_id}-models-${terraform.workspace}"
+  config_bucket_name = terraform.workspace == "default" ? "${var.project_id}-configs" : "${var.project_id}-configs-${terraform.workspace}"
+  files_bucket_name  = terraform.workspace == "default" ? "${var.project_id}-files" : "${var.project_id}-files-${terraform.workspace}"
 
   depends_on = [module.core]
 }

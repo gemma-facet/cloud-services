@@ -41,7 +41,7 @@ variable "inference_service_url" {
 # API Gateway
 resource "google_api_gateway_api" "gemma_api" {
   provider = google-beta
-  api_id   = "gemma-api"
+  api_id   = terraform.workspace == "default" ? "gemma-api" : "gemma-api-${terraform.workspace}"
   project  = var.project_id
 
   labels = var.labels

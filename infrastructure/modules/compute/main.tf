@@ -83,7 +83,7 @@ variable "inference_max_instances" {
 
 # Preprocessing Service
 resource "google_cloud_run_v2_service" "preprocessing_service" {
-  name     = "preprocessing-service"
+  name     = terraform.workspace == "default" ? "preprocessing-service" : "preprocessing-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -151,7 +151,7 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
 
 # Training Service
 resource "google_cloud_run_v2_service" "training_service" {
-  name     = "training-service"
+  name     = terraform.workspace == "default" ? "training-service" : "training-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -221,7 +221,7 @@ resource "google_cloud_run_v2_service" "training_service" {
 
 # Inference Service
 resource "google_cloud_run_v2_service" "inference_service" {
-  name     = "inference-service"
+  name     = terraform.workspace == "default" ? "inference-service" : "inference-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -297,7 +297,7 @@ resource "google_cloud_run_v2_service" "inference_service" {
 
 # Training Job (Cloud Run Job)
 resource "google_cloud_run_v2_job" "training_job" {
-  name     = "training-job"
+  name     = terraform.workspace == "default" ? "training-job" : "training-job-${terraform.workspace}"
   location = var.region
   launch_stage = "BETA"
   
@@ -360,7 +360,7 @@ resource "google_cloud_run_v2_job" "training_job" {
 
 # Export job
 resource "google_cloud_run_v2_job" "export_job" {
-  name     = "export-job"
+  name     = terraform.workspace == "default" ? "export-job" : "export-job-${terraform.workspace}"
   location = var.region
   launch_stage = "BETA"
   
