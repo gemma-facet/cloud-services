@@ -80,6 +80,9 @@ module "compute" {
   preprocessing_max_instances = 10
   training_max_instances      = 10
   inference_max_instances     = 3
+  vpc_connector_id            = module.core.vpc_connector_id
+  vpc_network_name            = module.core.vpc_network_name
+  vpc_subnet_name             = module.core.vpc_subnet_name
   
   depends_on = [module.core, module.storage]
 }

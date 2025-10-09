@@ -86,6 +86,21 @@ variable "inference_max_instances" {
   default     = 3
 }
 
+variable "vpc_connector_id" {
+  description = "ID of the VPC Access Connector"
+  type        = string
+}
+
+variable "vpc_network_name" {
+  description = "Name of the VPC network"
+  type        = string
+}
+
+variable "vpc_subnet_name" {
+  description = "Name of the VPC subnetwork"
+  type        = string
+}
+
 # Preprocessing Service
 resource "google_cloud_run_v2_service" "preprocessing_service" {
   name     = terraform.workspace == "default" ? "preprocessing-service" : "preprocessing-service-${terraform.workspace}"
@@ -328,6 +343,11 @@ resource "google_cloud_run_v2_service" "inference_service" {
     node_selector {
       accelerator = "nvidia-l4"
     }
+
+    vpc_access {
+      connector = var.vpc_connector_id
+      egress    = "ALL_TRAFFIC"
+    }
   }
 }
 
@@ -395,8 +415,15 @@ resource "google_cloud_run_v2_job" "training_job" {
       
       max_retries = 0
       timeout     = "3600s"
+
+      vpc_access {
+        connector = var.vpc_connector_id
+        egress    = "ALL_TRAFFIC"
+      }
     }
   }
+
+  
 }
 
 # Export job
@@ -463,6 +490,11 @@ resource "google_cloud_run_v2_job" "export_job" {
       
       max_retries = 0
       timeout     = "3600s"
+
+      vpc_access {
+        connector = var.vpc_connector_id
+        egress    = "ALL_TRAFFIC"
+      }
     }
   }
 }
