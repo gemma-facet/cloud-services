@@ -343,6 +343,7 @@ class JobStatusResponse(BaseModel):
     # Evaluation metrics recorded after training
     metrics: Optional[EvaluationMetrics] = None
     error: Optional[str] = None
+    latest_export: Optional["ExportSchema"] = None
 
 
 class JobListEntry(BaseModel):
@@ -360,12 +361,62 @@ class JobListResponse(BaseModel):
     jobs: List[JobListEntry]
 
 
-class DownloadUrlResponse(BaseModel):
-    download_url: str
-
-
 class JobDeleteResponse(BaseModel):
     job_id: str
     deleted: bool
     message: str
     deleted_resources: Optional[List[str]] = None
+
+
+export_type = Literal["adapter", "merged", "gguf"]
+export_status = Literal["running", "completed", "failed"]
+export_variant = Literal["raw", "file", "hf"]
+export_destination = Literal["gcs", "hf_hub"]
+
+
+class ExportRequest(BaseModel):
+    export_type: export_type
+    destination: List[export_destination] = ["gcs"]
+    hf_token: Optional[str] = None
+    hf_repo_id: Optional[str] = None
+
+
+class ExportAck(BaseModel):
+    success: bool
+    message: str
+    export_id: str
+
+
+class ExportArtifact(BaseModel):
+    type: export_type
+    path: str
+    variant: export_variant
+
+
+class ExportSchema(BaseModel):
+    export_id: str
+    job_id: str
+    type: export_type
+    destination: List[export_destination] = ["gcs"]
+    hf_repo_id: Optional[str] = None
+    status: export_status
+    message: Optional[str] = None
+    artifacts: List[ExportArtifact] = Field(default_factory=list)
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ExportJobListEntry(BaseModel):
+    """Minimal job info for listing exports - only what the frontend needs."""
+
+    job_id: str
+    job_name: str
+    base_model_id: str
+    artifacts: Optional[JobArtifacts] = Field(default_factory=JobArtifacts)
+
+
+class ListExportsResponse(BaseModel):
+    """Response for listing all export jobs."""
+
+    jobs: List[ExportJobListEntry]

@@ -1,0 +1,48 @@
+# Cloud Build configuration for inference service
+# This always deploys to staging because this is meant for manual execution only.
+# Prod releases should always be performed via terraform which handles workspace automatically
+
+substitutions:
+  _REGION: "us-central1" # Default region
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/inference-service:latest",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/inference-service:latest",
+      ]
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      [
+        "run",
+        "deploy",
+        "inference-service-staging",
+        "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning-staging/inference-service:latest",
+        "--region=${_REGION}",
+        "--platform=managed",
+        "--memory=16Gi",
+        "--cpu=4",
+        "--gpu=1",
+        "--port=8080",
+        "--allow-unauthenticated",
+        "--max-instances=3",
+        "--concurrency=1",
+        "--no-gpu-zonal-redundancy",
+        "--timeout=3600",
+        "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets-staging,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models-staging",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID,FIRESTORE_DB=gemma-staging",
+      ]
+
+options:
+  machineType: "E2_HIGHCPU_8"

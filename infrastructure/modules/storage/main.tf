@@ -166,7 +166,7 @@ resource "google_storage_bucket" "config_bucket" {
 # Firestore database
 resource "google_firestore_database" "gemma_database" {
   project                           = var.project_id
-  name                             = "(default)"
+  name                             = terraform.workspace == "default" ? "(default)" : "gemma-${terraform.workspace}"
   location_id                      = var.region
   type                            = "FIRESTORE_NATIVE"
   concurrency_mode                = "OPTIMISTIC"
@@ -214,6 +214,7 @@ resource "google_firestore_database" "gemma_database" {
 resource "google_firestore_document" "training_job_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "training_jobs"
   document_id = "training_job_example"
   fields      = "{\"job_id\":{\"stringValue\":\"training_job_example\"},\"job_name\":{\"stringValue\":\"SAMPLE FAKE JOB\"}}"
@@ -222,6 +223,7 @@ resource "google_firestore_document" "training_job_example" {
 resource "google_firestore_document" "processed_dataset_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "processed_datasets"
   document_id = "processed_dataset_example"
   fields      = "{\"processed_dataset_id\":{\"stringValue\":\"processed_dataset_example\"},\"dataset_name\":{\"stringValue\":\"SAMPLE FAKE DATASET\"}}"
@@ -230,6 +232,7 @@ resource "google_firestore_document" "processed_dataset_example" {
 resource "google_firestore_document" "dataset_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "datasets"
   document_id = "uploaded_dataset_example"
   fields      = "{\"uploaded_dataset_id\":{\"stringValue\":\"uploaded_dataset_example\"},\"dataset_name\":{\"stringValue\":\"SAMPLE FAKE UPLOADED DATASET\"}}"

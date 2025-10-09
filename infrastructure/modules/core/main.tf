@@ -44,9 +44,9 @@ resource "google_project_service" "required_apis" {
 
 # Service Account for all Gemma services
 resource "google_service_account" "gemma_services" {
-  account_id   = "gemma-services"
-  display_name = "Gemma Services Account"
-  description  = "Service account for Gemma fine-tuning services"
+  account_id   = terraform.workspace == "default" ? "gemma-services" : "gemma-services-${terraform.workspace}"
+  display_name = "Gemma Services Account (${terraform.workspace})"
+  description  = "Service account for Gemma fine-tuning services (${terraform.workspace})"
 
   depends_on = [google_project_service.required_apis]
 }
@@ -72,8 +72,8 @@ resource "google_project_iam_member" "gemma_services_permissions" {
 # Artifact Registry Repository
 resource "google_artifact_registry_repository" "gemma_services" {
   location      = var.region
-  repository_id = "gemma-fine-tuning"
-  description   = "Docker repository for Gemma fine-tuning services"
+  repository_id = terraform.workspace == "default" ? "gemma-fine-tuning" : "gemma-fine-tuning-${terraform.workspace}"
+  description   = "Docker repository for Gemma fine-tuning services (${terraform.workspace})"
   format        = "DOCKER"
   
   labels = var.labels

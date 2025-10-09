@@ -21,6 +21,16 @@ variable "region" {
   }
 }
 
+variable "environment" {
+  description = "Environment name (e.g., staging, production)"
+  type        = string
+  default     = "production"
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "Environment must be either 'staging' or 'production'."
+  }
+}
+
 variable "labels" {
   description = "Labels to apply to all resources for organization and cost tracking"
   type        = map(string)

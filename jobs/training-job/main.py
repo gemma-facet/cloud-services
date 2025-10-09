@@ -101,7 +101,8 @@ def main():
         raise ValueError(
             "PROJECT_ID environment variable must be set for Firestore client"
         )
-    job_manager = JobStateManager(project_id=project_id)
+    database_name = os.getenv("FIRESTORE_DB", None)
+    job_manager = JobStateManager(project_id=project_id, database_name=database_name)
 
     try:
         # Use JobTracker context manager for automatic status transitions
