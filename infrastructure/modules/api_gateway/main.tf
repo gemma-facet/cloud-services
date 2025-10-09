@@ -48,6 +48,8 @@ resource "google_api_gateway_api" "gemma_api" {
 }
 
 # API Config
+# Note that gcp does NOT allow updating API config, 
+# so you must be a unique ID whenever you want to modify this field to create a new resource
 resource "google_api_gateway_api_config" "gemma_api_config" {
   provider      = google-beta
   api           = google_api_gateway_api.gemma_api.api_id

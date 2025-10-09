@@ -1,7 +1,7 @@
 swagger: "2.0"
 info:
-  title: "gemma-fintuner-v5"
-  version: "5.0.0"
+  title: "gemma-fintuner-v6"
+  version: "6.0.0"
 host: gemma-finetuner
 schemes:
   - https
@@ -15,7 +15,7 @@ paths:
       x-google-backend:
         address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -30,7 +30,7 @@ paths:
       x-google-backend:
         address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -64,7 +64,7 @@ paths:
       x-google-backend:
         address: ${preprocessing_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -86,7 +86,7 @@ paths:
       x-google-backend:
         address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -102,7 +102,7 @@ paths:
       x-google-backend:
         address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -112,12 +112,32 @@ paths:
             type: "string"
   /jobs/**:
     get:
-      summary: "Proxy to training service"
+      summary: "Proxy to training service for job operations (get status, download)"
       operationId: "getJob"
       x-google-backend:
         address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
+      security:
+        - firebase: []
+      responses:
+        "200":
+          description: "A successful response"
+          schema:
+            type: "string"
+    post:
+      summary: "Proxy to training service for job operations (export)"
+      operationId: "postJob"
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            additionalProperties: true
+      x-google-backend:
+        address: ${training_service_url}
+        path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 15.0
       security:
         - firebase: []
       responses:
@@ -126,12 +146,28 @@ paths:
           schema:
             type: "string"
     delete:
-      summary: "Proxy to training service"
+      summary: "Proxy to training service for job deletion"
       operationId: "deleteJob"
       x-google-backend:
         address: ${training_service_url}
         path_translation: APPEND_PATH_TO_ADDRESS
-        deadline: 60.0
+        deadline: 15.0
+      security:
+        - firebase: []
+      responses:
+        "200":
+          description: "A successful response"
+          schema:
+            type: "string"
+
+  /exports:
+    get:
+      summary: "Proxy to training service for listing completed jobs (exports)"
+      operationId: "listExports"
+      x-google-backend:
+        address: ${training_service_url}
+        path_translation: APPEND_PATH_TO_ADDRESS
+        deadline: 15.0
       security:
         - firebase: []
       responses:

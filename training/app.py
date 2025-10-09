@@ -5,16 +5,21 @@ import base64
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, Request
 from google.cloud import run_v2
-from google.cloud import storage
-from datetime import timedelta, datetime, timezone
+from google.cloud import storage, firestore
+import uuid
+from datetime import datetime, timezone
 from schema import (
     TrainRequest,
     JobSubmitResponse,
     JobStatusResponse,
     JobListResponse,
     JobListEntry,
-    DownloadUrlResponse,
     JobDeleteResponse,
+    ExportRequest,
+    ExportAck,
+    ExportSchema,
+    ExportJobListEntry,
+    ListExportsResponse,
 )
 import uvicorn
 import hashlib
@@ -41,6 +46,7 @@ job_manager = JobStateManager(project_id)
 # These will not be configured in the os envvars because they are pretty much fixed to these two values
 REGION = os.getenv("REGION", "us-central1")
 JOB_NAME = os.getenv("TRAINING_JOB_NAME", "training-job")
+EXPORT_JOB_NAME = os.getenv("EXPORT_JOB_NAME", "export-job")
 GCS_CONFIG_BUCKET = os.getenv("GCS_CONFIG_BUCKET_NAME", "gemma-facet-configs")
 GCS_EXPORT_BUCKET = os.getenv("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
 
@@ -125,11 +131,17 @@ def make_job_id(
 
 
 @app.get("/jobs", response_model=JobListResponse)
-async def list_jobs(current_user_id: str = Depends(get_current_user_id)):
+async def list_jobs(
+    status: Optional[str] = None, current_user_id: str = Depends(get_current_user_id)
+):
     """List all jobs with job_id and job_name."""
     try:
         # Query Firestore for jobs owned by user
-        docs = job_manager.collection.where("user_id", "==", current_user_id).stream()
+        query = job_manager.collection.where("user_id", "==", current_user_id)
+        if status:
+            query = query.where("status", "==", status)
+
+        docs = query.stream()
         entries = []
         for doc in docs:
             data = doc.to_dict() or {}
@@ -229,79 +241,6 @@ async def start_training(
         raise HTTPException(
             status_code=500, detail=f"Failed to start training job: {str(e)}"
         )
-
-
-@app.get("/jobs/download/{job_id}", response_model=DownloadUrlResponse)
-async def download_gguf_file(
-    job_id: str,
-    current_user_id: str = Depends(get_current_user_id),
-):
-    """
-    Generate a signed URL for downloading the GGUF file of a specific job.
-    This is a convenience endpoint that automatically finds the GGUF file path from job status.
-    """
-    try:
-        # Verify ownership
-        if not job_manager.verify_job_ownership(job_id, current_user_id):
-            raise HTTPException(status_code=404, detail="Job not found")
-        # Get job status to find GGUF path
-        job_data = job_manager.get_job_status_dict(job_id)
-        if not job_data:
-            raise HTTPException(status_code=404, detail="Job not found")
-
-        gguf_path = job_data.get("gguf_path")
-        if not gguf_path:
-            raise HTTPException(
-                status_code=404,
-                detail="No GGUF file available for this job. Check if include_gguf was enabled during training.",
-            )
-
-        # Extract the blob path from the GCS URL
-        # gguf_path format: gs://bucket/gguf_models/job_123/model.gguf
-        if not gguf_path.startswith("gs://"):
-            raise HTTPException(status_code=500, detail="Invalid GGUF path format")
-
-        # Remove gs://bucket/ prefix to get blob path
-        path_parts = gguf_path.replace("gs://", "").split("/", 1)
-        if len(path_parts) != 2:
-            raise HTTPException(status_code=500, detail="Invalid GGUF path format")
-
-        bucket_name, blob_path = path_parts
-
-        # Verify it's the expected bucket
-        if bucket_name != GCS_EXPORT_BUCKET:
-            raise HTTPException(
-                status_code=500, detail="GGUF file in unexpected bucket"
-            )
-
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(GCS_EXPORT_BUCKET)
-        blob = bucket.blob(blob_path)
-
-        if not blob.exists():
-            raise HTTPException(
-                status_code=404, detail="GGUF file not found in storage"
-            )
-
-        # Generate a signed URL that is valid for 1 hour
-        signed_url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(minutes=30),
-            method="GET",
-        )
-
-        return DownloadUrlResponse(download_url=signed_url)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(
-            f"Failed to generate GGUF download URL for job {job_id}: {str(e)}"
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# NOTE: In the future we might want to add /jobs/{job_id}/download/model endpoint for adapter and merged models
 
 
 def delete_gcs_resources(
@@ -443,7 +382,186 @@ async def get_job_status(
         logging.error(f"Job not found: {job_id}")
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # Query for the latest export for this job_id, if any
+    export_query = (
+        job_manager.db.collection("exports")
+        .where(filter=firestore.FieldFilter("job_id", "==", job_id))
+        .order_by("started_at", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    export_docs = list(export_query.stream())
+    export_data = None
+    if export_docs:
+        export_data = export_docs[0].to_dict()
+        export_data = ExportSchema(**export_data)
+
+    job_data["latest_export"] = export_data
+
     return job_data
+
+
+def create_export_document(
+    job_id: str,
+    export_type: str,
+    destination: List[str],
+    hf_repo_id: Optional[str] = None,
+) -> str:
+    """
+    Create an export document in Firestore and return the export_id.
+
+    Args:
+        job_id: The training job ID
+        export_type: Type of export (adapter, merged, gguf)
+        destination: Destination of export (gcs, hf_hub)
+        hf_repo_id: Hugging Face repository ID
+
+    Returns:
+        str: The export document ID
+    """
+    export_id = str(uuid.uuid4())
+
+    export_data = {
+        "export_id": export_id,
+        "job_id": job_id,
+        "type": export_type,
+        "destination": destination,
+        "hf_repo_id": hf_repo_id,
+        "status": "running",
+        "message": "Export job started",
+        "artifacts": [],
+        "started_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    job_manager.db.collection("exports").document(export_id).set(export_data)
+    logging.info(f"Created export document {export_id} for job {job_id}")
+
+    return export_id
+
+
+@app.post("/jobs/{job_id}/export", response_model=ExportAck, name="Export Model")
+async def export(
+    job_id: str,
+    request: ExportRequest,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    # Validate job ownership and completion status
+    try:
+        doc = job_manager.collection.document(job_id).get()
+        if not doc.exists:
+            logging.error(f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_data = doc.to_dict()
+        if not job_data:
+            logging.error(f"Job {job_id} data is empty")
+            raise HTTPException(status_code=404, detail="Job data not found")
+
+        # Check job ownership
+        job_user_id = job_data.get("user_id")
+        if job_user_id != current_user_id:
+            logging.error(
+                f"User {current_user_id} attempted to access job {job_id} owned by {job_user_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Job does not belong to current user",
+            )
+
+        # Check job completion status
+        job_status = job_data.get("status")
+        if job_status != "completed":
+            logging.error(f"Job {job_id} is not completed (status: {job_status})")
+            raise HTTPException(
+                status_code=400, detail="Only completed jobs can be exported"
+            )
+
+        logging.info(
+            f"Export request validated for job {job_id} by user {current_user_id}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Failed to verify job ownership: {e}")
+        raise HTTPException(status_code=500, detail="Failed to verify job ownership")
+
+    if "hf_hub" in request.destination and not request.hf_repo_id:
+        raise HTTPException(
+            status_code=400, detail="HF repo ID is required when export is to HF hub"
+        )
+
+    if "hf_hub" in request.destination and not request.hf_token:
+        raise HTTPException(
+            status_code=400, detail="HF token is required when export is to HF hub"
+        )
+
+    # Create export document and trigger job
+    try:
+        # Create export document in Firestore
+        export_id = create_export_document(
+            job_id,
+            request.export_type,
+            request.destination,
+            request.hf_repo_id,
+        )
+
+        # Trigger Cloud Run Job
+        client = run_v2.JobsClient()
+        job_name = f"projects/{project_id}/locations/{REGION}/jobs/{EXPORT_JOB_NAME}"
+        run_request = run_v2.RunJobRequest(
+            name=job_name,
+            overrides=run_v2.RunJobRequest.Overrides(
+                container_overrides=[
+                    run_v2.RunJobRequest.Overrides.ContainerOverride(
+                        env=[
+                            run_v2.EnvVar(name="EXPORT_ID", value=export_id),
+                            run_v2.EnvVar(name="PROJECT_ID", value=project_id),
+                        ]
+                        + (
+                            [run_v2.EnvVar(name="HF_TOKEN", value=request.hf_token)]
+                            if request.hf_token
+                            else []
+                        )
+                    )
+                ]
+            ),
+        )
+
+        _ = client.run_job(request=run_request)
+        logging.info(f"Triggered export job {export_id} for job {job_id}")
+
+        return ExportAck(
+            success=True,
+            message=f"Export job {export_id} started successfully",
+            export_id=export_id,
+        )
+
+    except Exception as e:
+        logging.error(f"Failed to start export job for {job_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start export job: {str(e)}"
+        )
+
+
+# This is pretty much just get jobs but filtered to completed jobs only
+@app.get("/exports", response_model=ListExportsResponse)
+async def get_exports(current_user_id: str = Depends(get_current_user_id)):
+    try:
+        docs = (
+            job_manager.db.collection("training_jobs")
+            .where(filter=firestore.FieldFilter("user_id", "==", current_user_id))
+            .where(filter=firestore.FieldFilter("status", "==", "completed"))
+            .stream()
+        )
+        entries = []
+        for doc in docs:
+            data = doc.to_dict()
+            entries.append(ExportJobListEntry(**data))
+        return ListExportsResponse(jobs=entries)
+    except Exception as e:
+        logging.error(f"Failed to get exports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get exports")
 
 
 if __name__ == "__main__":

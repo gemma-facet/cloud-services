@@ -91,7 +91,8 @@ module "api_gateway" {
   region                  = var.region
   labels                  = var.labels
   service_account_email   = module.core.service_account_email
-  api_config_id           = "gemma-api"
+  # A more reliable way is to generate a hash of the config file content, but this suffices for now...
+  api_config_id           = "gemma-api-${uuid()}"
   preprocessing_service_url = module.compute.preprocessing_service_url
   training_service_url     = module.compute.training_service_url
   inference_service_url    = module.compute.inference_service_url
