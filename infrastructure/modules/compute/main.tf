@@ -45,6 +45,11 @@ variable "files_bucket_name" {
   type        = string
 }
 
+variable "firestore_database_name" {
+  description = "Firestore database name"
+  type        = string
+}
+
 variable "training_image_tag" {
   description = "Training service image tag"
   type        = string
@@ -125,6 +130,11 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
         value = var.project_id
       }
 
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
+      }
+
       startup_probe {
         http_get {
           path = "/health"
@@ -198,6 +208,11 @@ resource "google_cloud_run_v2_service" "training_service" {
         value = var.project_id
       }
 
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
+      }
+
       startup_probe {
         http_get {
           path = "/health"
@@ -263,6 +278,11 @@ resource "google_cloud_run_v2_service" "inference_service" {
       env {
         name  = "PROJECT_ID"
         value = var.project_id
+      }
+
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
       }
 
       ports {
@@ -344,6 +364,11 @@ resource "google_cloud_run_v2_job" "training_job" {
           name  = "PROJECT_ID"
           value = var.project_id
         }
+
+        env {
+          name  = "FIRESTORE_DB"
+          value = var.firestore_database_name
+        }
       }
 
       node_selector {
@@ -406,6 +431,11 @@ resource "google_cloud_run_v2_job" "export_job" {
         env {
           name  = "PROJECT_ID"
           value = var.project_id
+        }
+
+        env {
+          name  = "FIRESTORE_DB"
+          value = var.firestore_database_name
         }
       }
 

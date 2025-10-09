@@ -20,14 +20,14 @@ class DatasetTracker:
     Uses simple dictionaries instead of complex dataclasses.
     """
 
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, database_name: Optional[str] = None):
         """
         Initialize dataset tracker.
 
         Args:
             project_id: Google Cloud project ID
         """
-        self.db = firestore.Client(project=project_id)
+        self.db = firestore.Client(project=project_id, database=database_name)
         self.processed_collection = self.db.collection("processed_datasets")
         self.logger = logging.getLogger(__name__)
 

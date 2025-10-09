@@ -41,7 +41,8 @@ logging.info("✅ Training service ready")
 project_id = os.getenv("PROJECT_ID")
 if not project_id:
     raise ValueError("PROJECT_ID environment variable must be set for Firestore client")
-job_manager = JobStateManager(project_id)
+database_name = os.getenv("FIRESTORE_DB", None)
+job_manager = JobStateManager(project_id, database_name=database_name)
 
 # These will not be configured in the os envvars because they are pretty much fixed to these two values
 REGION = os.getenv("REGION", "us-central1")

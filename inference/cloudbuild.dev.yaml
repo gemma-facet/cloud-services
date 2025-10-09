@@ -41,7 +41,7 @@ steps:
         "--no-gpu-zonal-redundancy",
         "--timeout=3600",
         "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets-staging,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models-staging",
-        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID,FIRESTORE_DB=gemma-staging",
       ]
 
 options:

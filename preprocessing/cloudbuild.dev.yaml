@@ -35,7 +35,7 @@ steps:
         "--memory=8Gi",
         "--cpu=2",
         "--set-env-vars=STORAGE_TYPE=gcs,GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets-staging",
-        "--set-env-vars=PROJECT_ID=$PROJECT_ID",
+        "--set-env-vars=PROJECT_ID=$PROJECT_ID,FIRESTORE_DB=gemma-staging",
       ]
 
 options:

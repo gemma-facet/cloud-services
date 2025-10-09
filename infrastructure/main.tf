@@ -73,6 +73,7 @@ module "compute" {
   export_bucket_name         = module.storage.export_bucket_name
   config_bucket_name         = module.storage.config_bucket_name
   files_bucket_name          = module.storage.files_bucket_name
+  firestore_database_name    = module.storage.firestore_database_name
   training_image_tag         = "latest"
   preprocessing_image_tag    = "latest"
   inference_image_tag        = "latest"

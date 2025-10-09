@@ -42,7 +42,9 @@ except Exception as e:
 project_id = os.getenv("PROJECT_ID")
 if not project_id:
     raise ValueError("PROJECT_ID environment variable must be set for Firestore client")
-db = firestore.Client(project=project_id)
+# By default uses (default) database, but can specify in env var e.g. staging
+database_name = os.getenv("FIRESTORE_DB")
+db = firestore.Client(project=project_id, database=database_name)
 
 
 logging.info("✅ Inference service ready")
