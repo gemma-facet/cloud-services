@@ -18,11 +18,6 @@ variable "service_account_email" {
   type        = string
 }
 
-variable "api_config_id" {
-  description = "API Gateway configuration ID"
-  type        = string
-}
-
 variable "preprocessing_service_url" {
   description = "URL of the preprocessing service"
   type        = string
@@ -48,24 +43,33 @@ resource "google_api_gateway_api" "gemma_api" {
 }
 
 # API Config
-# Note that gcp does NOT allow updating API config, 
-# so you must be a unique ID whenever you want to modify this field to create a new resource
+# Note that GCP does NOT allow updating API config in-place,
+# so we use a version-based ID that changes only when the config content changes.
+locals {
+  api_config_content = templatefile("${path.module}/api-config.yaml", {
+    project_id               = var.project_id
+    service_account_email    = var.service_account_email
+    preprocessing_service_url = var.preprocessing_service_url
+    training_service_url     = var.training_service_url
+    inference_service_url    = var.inference_service_url
+  })
+  
+  # Create a deterministic config ID based on content hash
+  # Format: gemma-api-<hash8>
+  config_hash = substr(sha256(local.api_config_content), 0, 8)
+  api_config_id = "gemma-api-${local.config_hash}"
+}
+
 resource "google_api_gateway_api_config" "gemma_api_config" {
   provider      = google-beta
   api           = google_api_gateway_api.gemma_api.api_id
-  api_config_id = var.api_config_id
+  api_config_id = local.api_config_id
   project       = var.project_id
 
   openapi_documents {
     document {
       path = "spec.yaml"
-      contents = base64encode(templatefile("${path.module}/api-config.yaml", {
-        project_id               = var.project_id
-        service_account_email    = var.service_account_email
-        preprocessing_service_url = var.preprocessing_service_url
-        training_service_url     = var.training_service_url
-        inference_service_url    = var.inference_service_url
-      }))
+      contents = base64encode(local.api_config_content)
     }
   }
 

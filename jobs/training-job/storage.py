@@ -669,9 +669,10 @@ export_files_bucket = os.environ.get(
     "GCS_EXPORT_FILES_BUCKET_NAME", "gemma-facet-files"
 )
 project_id = os.environ.get("PROJECT_ID")
+database_name = os.environ.get("FIRESTORE_DB")
 
 # Initialize dataset tracker if project_id is available
-dataset_tracker = DatasetTracker(project_id) if project_id else None
+dataset_tracker = DatasetTracker(project_id, database_name) if project_id else None
 
 storage_service = CloudStorageService(
     data_bucket, export_bucket, export_files_bucket, dataset_tracker

@@ -213,6 +213,22 @@ resource "google_cloud_run_v2_service" "training_service" {
         value = var.firestore_database_name
       }
 
+    // these are required for gRPC client to call jobs
+      env {
+        name = "REGION"
+        value = var.region
+      }
+
+      env {
+        name = "TRAINING_JOB_NAME"
+        value = terraform.workspace == "default" ? "training-job" : "training-job-${terraform.workspace}"
+      }
+
+      env {
+        name = "EXPORT_JOB_NAME"
+        value = terraform.workspace == "default" ? "export-job" : "export-job-${terraform.workspace}"
+      }
+
       startup_probe {
         http_get {
           path = "/health"
