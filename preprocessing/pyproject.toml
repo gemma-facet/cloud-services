@@ -40,4 +40,4 @@ explicit = true
 torch = [
   { index = "pytorch-cpu" },
 ]
-synthetic-data-kit = { path = "../../synthetic-data-kit", editable = true }
+synthetic-data-kit = { path = "services/synthetic_data_kit", editable = true }

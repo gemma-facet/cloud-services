@@ -48,6 +48,8 @@ class LLMClient:
             max_retries: Override max retries from config
             retry_delay: Override retry delay from config
         """
+        from dotenv import load_dotenv
+        load_dotenv()
         # Load config
         self.config = load_config(config_path)
         
@@ -65,7 +67,7 @@ class LLMClient:
             self.api_base = api_base or api_endpoint_config.get('api_base')
             
             # Check for environment variables
-            api_endpoint_key = os.environ.get('API_ENDPOINT_KEY')
+            api_endpoint_key = os.getenv('GEMINI_API_KEY')
             print(f"API_ENDPOINT_KEY from environment: {'Found' if api_endpoint_key else 'Not found'}")
             
             # Set API key with priority: CLI arg > env var > config

@@ -69,7 +69,7 @@ def curate_qa_pairs(
         config_path=config_path,
         provider=provider,
         api_base=api_base,
-        model_name=model
+        model_name=model,
     )
     
     # Get threshold from args, then config, then default

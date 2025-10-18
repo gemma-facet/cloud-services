@@ -6,7 +6,5 @@
 # Document parsers for different file formats
 from synthetic_data_kit.parsers.pdf_parser import PDFParser
 from synthetic_data_kit.parsers.html_parser import HTMLParser
-from synthetic_data_kit.parsers.youtube_parser import YouTubeParser
 from synthetic_data_kit.parsers.docx_parser import DOCXParser
 from synthetic_data_kit.parsers.ppt_parser import PPTParser
-from synthetic_data_kit.parsers.txt_parser import TXTParser

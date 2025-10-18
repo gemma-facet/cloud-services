@@ -7,8 +7,7 @@ from schema import (
     NoSplitConfig,
     HFSplitConfig,
 )
-from .dataset_synthesizer import synthetic_data_pipline , config_path , api_base , model
-import os
+from .dataset_synthesizer import synthetic_data_pipline , config_path 
 
 
 logger = logging.getLogger(__name__)
@@ -149,15 +148,17 @@ class DatasetLoader:
         ):
             raise ValueError("Invalid file type")
 
-        output_dir = os.path.join(self.storage.base_path,"processed_datasets")
-        dataset = synthetic_data_pipline(
+        raw_dataset = synthetic_data_pipline( # return curated qa pairs
                 file_path=file_path,
-                output_dir=output_dir,
                 config_path=config_path,
-                api_base=api_base,
-                model=model, 
-                
         )
+
+        # Convert the list of dicts to a Hugging Face Dataset
+        for item in raw_dataset:
+            item['prompt'] = item.pop('question')
+            item['completion'] = item.pop('answer')
+
+        dataset = DatasetDict({"train": Dataset.from_list(raw_dataset)})
 
         
         # No split configuration - return all data as train split

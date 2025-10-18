@@ -74,11 +74,8 @@ def convert_format(
             formatted_pairs = []
             for pair in qa_pairs:
                 formatted_pairs.append({
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful AI assistant."},
-                        {"role": "user", "content": pair["question"]},
-                        {"role": "assistant", "content": pair["answer"]}
-                    ]
+                    "question": pair["question"],
+                    "completion": pair["answer"]
                 })
             
         else:

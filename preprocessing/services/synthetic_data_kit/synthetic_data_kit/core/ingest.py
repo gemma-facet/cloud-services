@@ -37,10 +37,8 @@ def determine_parser(file_path: str, config: Dict[str, Any], multimodal: bool = 
     """Determine the appropriate parser for a file or URL"""
     from synthetic_data_kit.parsers.pdf_parser import PDFParser
     from synthetic_data_kit.parsers.html_parser import HTMLParser
-    from synthetic_data_kit.parsers.youtube_parser import YouTubeParser
     from synthetic_data_kit.parsers.docx_parser import DOCXParser
     from synthetic_data_kit.parsers.ppt_parser import PPTParser
-    from synthetic_data_kit.parsers.txt_parser import TXTParser
     from synthetic_data_kit.parsers.multimodal_parser import MultimodalParser
 
     ext = os.path.splitext(file_path)[1].lower()
@@ -53,17 +51,7 @@ def determine_parser(file_path: str, config: Dict[str, Any], multimodal: bool = 
     if ext == ".pdf":
         return PDFParser()
 
-    # Check if it's a URL
-    if file_path.startswith(("http://", "https://")):
-        # YouTube URL
-        if "youtube.com" in file_path or "youtu.be" in file_path:
-            return YouTubeParser()
-        # PDF URL
-        elif _check_pdf_url(file_path):
-            return MultimodalParser() if multimodal else PDFParser()
-        # HTML URL
-        else:
-            return HTMLParser()
+   
 
     # File path - determine by extension
     if os.path.exists(file_path):
@@ -72,7 +60,6 @@ def determine_parser(file_path: str, config: Dict[str, Any], multimodal: bool = 
             ".htm": HTMLParser(),
             ".docx": DOCXParser(),
             ".pptx": PPTParser(),
-            ".txt": TXTParser(),
         }
 
         if ext in parsers:

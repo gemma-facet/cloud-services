@@ -66,7 +66,7 @@ def process_file(
         config_path=config_path,
         provider=provider,
         api_base=api_base,
-        model_name=model
+        model_name=model,
     )
     
     # Override chunking config if provided

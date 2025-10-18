@@ -25,6 +25,9 @@ DEFAULT_CONFIG_PATH = PACKAGE_CONFIG_PATH
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """Load YAML configuration file"""
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     if config_path is None:
         # Try each path in order until one exists
         for path in [PACKAGE_CONFIG_PATH, ORIGINAL_CONFIG_PATH]:
@@ -42,7 +45,17 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    # Debug: Print LLM provider if it exists
+    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    
+    if gemini_api_key:
+        if 'api-endpoint' in config:
+            config['api-endpoint']['api_key'] = gemini_api_key
+            print(f"✓ Loaded GEMINI_API_KEY from environment")
+        else:
+            print("⚠ GEMINI_API_KEY found but 'api-endpoint' config section missing")
+    else:
+        print("⚠ GEMINI_API_KEY not found in environment variables")
+
     if 'llm' in config and 'provider' in config['llm']:
         print(f"Config has LLM provider set to: {config['llm']['provider']}")
     else:
