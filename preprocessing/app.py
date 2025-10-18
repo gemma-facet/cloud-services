@@ -18,7 +18,8 @@ from schema import (
 )
 
 project_id = os.getenv("PROJECT_ID")
-dataset_tracker = DatasetTracker(project_id)
+database_name = os.getenv("FIRESTORE_DB", None)
+dataset_tracker = DatasetTracker(project_id, database_name=database_name)
 
 
 logging.basicConfig(level=logging.INFO)

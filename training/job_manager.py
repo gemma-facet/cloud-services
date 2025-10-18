@@ -23,7 +23,12 @@ class JobStateManager:
     Provides clean API for tracking training job progress.
     """
 
-    def __init__(self, project_id: str, collection_name: str = "training_jobs"):
+    def __init__(
+        self,
+        project_id: str,
+        collection_name: str = "training_jobs",
+        database_name: Optional[str] = None,
+    ):
         """
         Initialize job state manager.
 
@@ -31,7 +36,7 @@ class JobStateManager:
             project_id: Google Cloud project ID
             collection_name: Name of the Firestore collection for jobs
         """
-        self.db = firestore.Client(project=project_id)
+        self.db = firestore.Client(project=project_id, database=database_name)
         self.collection = self.db.collection(collection_name)
         self.logger = logging.getLogger(__name__)
 

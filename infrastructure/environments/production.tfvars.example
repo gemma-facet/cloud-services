@@ -1,13 +1,16 @@
 # =============================================================================
-# Copy this file to terraform.tfvars and fill in your values
+# Production Environment Configuration
 # =============================================================================
 
-project_id = "your-gcp-project-id-here"
+project_id = "your-gcp-project-id-here"  # Replace with your actual project ID
 
 region = "us-central1"
 
-# OPTIONAL: Labels for all resources (for cost tracking and organization)
+environment = "production"
+
+# Environment-specific labels
 labels = {
   project     = "gemma-fine-tuning"
   managed-by  = "terraform"
+  environment = "production"
 }

@@ -40,10 +40,10 @@ module "storage" {
   project_id         = var.project_id
   region             = var.region
   labels             = var.labels
-  data_bucket_name   = "${var.project_id}-datasets"
-  export_bucket_name = "${var.project_id}-models"
-  config_bucket_name = "${var.project_id}-configs"
-  files_bucket_name  = "${var.project_id}-files"
+  data_bucket_name   = terraform.workspace == "default" ? "${var.project_id}-datasets" : "${var.project_id}-datasets-${terraform.workspace}"
+  export_bucket_name = terraform.workspace == "default" ? "${var.project_id}-models" : "${var.project_id}-models-${terraform.workspace}"
+  config_bucket_name = terraform.workspace == "default" ? "${var.project_id}-configs" : "${var.project_id}-configs-${terraform.workspace}"
+  files_bucket_name  = terraform.workspace == "default" ? "${var.project_id}-files" : "${var.project_id}-files-${terraform.workspace}"
 
   depends_on = [module.core]
 }
@@ -73,12 +73,16 @@ module "compute" {
   export_bucket_name         = module.storage.export_bucket_name
   config_bucket_name         = module.storage.config_bucket_name
   files_bucket_name          = module.storage.files_bucket_name
+  firestore_database_name    = module.storage.firestore_database_name
   training_image_tag         = "latest"
   preprocessing_image_tag    = "latest"
   inference_image_tag        = "latest"
   preprocessing_max_instances = 10
   training_max_instances      = 10
   inference_max_instances     = 3
+  vpc_connector_id            = module.core.vpc_connector_id
+  vpc_network_name            = module.core.vpc_network_name
+  vpc_subnet_name             = module.core.vpc_subnet_name
   
   depends_on = [module.core, module.storage]
 }
@@ -91,7 +95,6 @@ module "api_gateway" {
   region                  = var.region
   labels                  = var.labels
   service_account_email   = module.core.service_account_email
-  api_config_id           = "gemma-api"
   preprocessing_service_url = module.compute.preprocessing_service_url
   training_service_url     = module.compute.training_service_url
   inference_service_url    = module.compute.inference_service_url

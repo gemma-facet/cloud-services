@@ -1,39 +1,13 @@
+substitutions:
+  _ARTIFACT_REGISTRY_URL: "" # Full registry URL from Terraform (e.g., us-central1-docker.pkg.dev/project/repo)
+
 steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
-      [
-        "build",
-        "-t",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/inference-service:latest",
-        ".",
-      ]
+      ["build", "-t", "${_ARTIFACT_REGISTRY_URL}/inference-service:latest", "."]
 
   - name: "gcr.io/cloud-builders/docker"
-    args:
-      [
-        "push",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/inference-service:latest",
-      ]
-
-  - name: "gcr.io/cloud-builders/gcloud"
-    args:
-      - "run"
-      - "deploy"
-      - "inference-service"
-      - "--image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/inference-service:latest"
-      - "--region=us-central1"
-      - "--platform=managed"
-      - "--memory=16Gi"
-      - "--cpu=4"
-      - "--gpu=1"
-      - "--port=8080"
-      - "--allow-unauthenticated"
-      - "--max-instances=3"
-      - "--concurrency=1"
-      - "--no-gpu-zonal-redundancy"
-      - "--timeout=3600"
-      - "--set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models"
-      - "--set-env-vars=PROJECT_ID=$PROJECT_ID"
+    args: ["push", "${_ARTIFACT_REGISTRY_URL}/inference-service:latest"]
 
 options:
   machineType: "E2_HIGHCPU_8"

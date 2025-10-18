@@ -20,14 +20,14 @@ class DatasetTracker:
     Uses simple dictionaries instead of complex dataclasses.
     """
 
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, database_name: Optional[str] = None):
         """
         Initialize dataset tracker.
 
         Args:
             project_id: Google Cloud project ID
         """
-        self.db = firestore.Client(project=project_id)
+        self.db = firestore.Client(project=project_id, database=database_name)
         self.processed_collection = self.db.collection("processed_datasets")
         self.logger = logging.getLogger(__name__)
 
@@ -658,8 +658,13 @@ class StorageStrategyFactory:
 data_bucket = os.environ.get("GCS_DATA_BUCKET_NAME", "gemma-facet-datasets")
 export_bucket = os.environ.get("GCS_EXPORT_BUCKET_NAME", "gemma-facet-models")
 project_id = os.environ.get("PROJECT_ID")
+database_name = os.environ.get("FIRESTORE_DB")
 
 # Initialize dataset tracker if project_id is available
-dataset_tracker = DatasetTracker(project_id) if project_id else None
+dataset_tracker = (
+    DatasetTracker(project_id=project_id, database_name=database_name)
+    if project_id
+    else None
+)
 
 storage_service = CloudStorageService(data_bucket, export_bucket, dataset_tracker)

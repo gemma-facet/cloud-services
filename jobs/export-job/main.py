@@ -23,8 +23,9 @@ def main():
             raise ValueError("PROJECT_ID environment variable is required")
 
         hf_token = os.getenv("HF_TOKEN", None)
+        database_name = os.getenv("FIRESTORE_DB", None)
 
-        db = firestore.Client(project=project_id)
+        db = firestore.Client(project=project_id, database=database_name)
 
         export_ref = db.collection("exports").document(export_id)
         export_doc = export_ref.get()

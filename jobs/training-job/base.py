@@ -14,7 +14,7 @@ class BaseTrainingService(ABC):
 
     def run_training(
         self, processed_dataset_id: str, config: TrainingConfig, tracker: JobTracker
-    ) -> Dict[str, Any]:
+    ) -> str:
         # 1. Preparation
         tracker.preparing()
 
@@ -63,14 +63,9 @@ class BaseTrainingService(ABC):
         metrics = self._evaluate_if_needed(trainer, eval_dataset)
 
         # 11. Save + record in tracker
-        artifact = self._save_and_track(model, tokenizer, tracker, metrics, config)
+        remote_path = self._save_and_track(model, tokenizer, tracker, metrics, config)
 
-        result = {
-            "adapter_path": artifact.remote_path,
-            "base_model_id": artifact.base_model_id,
-        }
-
-        return result
+        return remote_path
 
     # --- Hooks to implement in subclasses ---
     @abstractmethod
@@ -122,7 +117,7 @@ class BaseTrainingService(ABC):
         tracker: JobTracker,
         metrics: Optional[Dict[str, Any]],
         train_config: TrainingConfig,
-    ) -> Any:
+    ) -> str:
         return save_and_track(
             train_config.export_config,
             model,

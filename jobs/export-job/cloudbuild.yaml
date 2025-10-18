@@ -1,54 +1,12 @@
+substitutions:
+  _ARTIFACT_REGISTRY_URL: "" # Full registry URL from Terraform (e.g., us-central1-docker.pkg.dev/project/repo)
+
 steps:
   - name: "gcr.io/cloud-builders/docker"
-    args:
-      [
-        "build",
-        "-t",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-job:latest",
-        ".",
-      ]
+    args: ["build", "-t", "${_ARTIFACT_REGISTRY_URL}/export-job:latest", "."]
 
   - name: "gcr.io/cloud-builders/docker"
-    args:
-      [
-        "push",
-        "us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-job:latest",
-      ]
-
-  - name: "gcr.io/cloud-builders/gcloud"
-    entrypoint: "/bin/sh"
-    args:
-      - "-c"
-      - |
-        set -e
-        echo "Attempting to update Cloud Run job 'export-job'..."
-        if gcloud beta run jobs update export-job \
-             --image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-job:latest \
-             --region=us-central1 \
-             --memory=32Gi \
-             --cpu=8 \
-             --gpu=1 \
-             --task-timeout=3600 \
-             --max-retries=0 \
-             --set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs \
-             --set-env-vars=GCS_EXPORT_FILES_BUCKET_NAME=${PROJECT_ID}-files \
-             --set-env-vars=PROJECT_ID=$PROJECT_ID; then
-          echo "Updated existing job.";
-        else
-          echo "Update failed, attempting to create job...";
-          gcloud beta run jobs create export-job \
-            --image=us-central1-docker.pkg.dev/$PROJECT_ID/gemma-fine-tuning/export-job:latest \
-            --region=us-central1 \
-            --memory=32Gi \
-            --cpu=8 \
-            --gpu=1 \
-            --task-timeout=3600 \
-            --max-retries=0 \
-            --no-gpu-zonal-redundancy \ 
-            --set-env-vars=GCS_DATA_BUCKET_NAME=${PROJECT_ID}-datasets,GCS_EXPORT_BUCKET_NAME=${PROJECT_ID}-models,GCS_CONFIG_BUCKET_NAME=${PROJECT_ID}-configs \
-            --set-env-vars=GCS_EXPORT_FILES_BUCKET_NAME=${PROJECT_ID}-files \
-            --set-env-vars=PROJECT_ID=$PROJECT_ID;
-        fi
+    args: ["push", "${_ARTIFACT_REGISTRY_URL}/export-job:latest"]
 
 options:
   machineType: "E2_HIGHCPU_32"

@@ -163,10 +163,18 @@ resource "google_storage_bucket" "config_bucket" {
   uniform_bucket_level_access = true
 }
 
+# Make files bucket publicly readable (for hosting static files)
+resource "google_storage_bucket_iam_member" "member" {
+  provider = google
+  bucket   = google_storage_bucket.files_bucket.name
+  role     = "roles/storage.objectViewer"
+  member   = "allUsers"
+}
+
 # Firestore database
 resource "google_firestore_database" "gemma_database" {
   project                           = var.project_id
-  name                             = "(default)"
+  name                             = terraform.workspace == "default" ? "(default)" : "gemma-${terraform.workspace}"
   location_id                      = var.region
   type                            = "FIRESTORE_NATIVE"
   concurrency_mode                = "OPTIMISTIC"
@@ -175,45 +183,32 @@ resource "google_firestore_database" "gemma_database" {
   delete_protection_state          = "DELETE_PROTECTION_ENABLED"
 }
 
-# NOTE: We did not enable indexing in the original project so we will not turn this on for now
-# I do NOT believe we require composite indexes for our current queries, firestore automatically create simple single-field indexes already
+# This index is used when querying export jobs
+resource "google_firestore_index" "exports_index" {
+  project    = var.project_id
+  database   = google_firestore_database.gemma_database.name
+  collection = "exports"
 
-# Firestore indexes for performance
-# resource "google_firestore_index" "training_jobs_index" {
-#   project    = var.project_id
-#   database   = google_firestore_database.gemma_database.name
-#   collection = "training_jobs"
+  fields {
+    field_path = "job_id"
+    order      = "ASCENDING"
+  }
 
-#   fields {
-#     field_path = "job_id"
-#     order      = "ASCENDING"
-#   }
+  fields {
+    field_path = "started_at"
+    order      = "DESCENDING"
+  }
 
-#   fields {
-#     field_path = "created_at"
-#     order      = "DESCENDING"
-#   }
-# }
-
-# resource "google_firestore_index" "datasets_index" {
-#   project    = var.project_id
-#   database   = google_firestore_database.gemma_database.name
-#   collection = "processed_datasets"
-
-#   fields {
-#     field_path = "processed_dataset_id"
-#     order      = "ASCENDING"
-#   }
-
-#   fields {
-#     field_path = "created_at"
-#     order      = "DESCENDING"
-#   }
-# }
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+}
 
 resource "google_firestore_document" "training_job_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "training_jobs"
   document_id = "training_job_example"
   fields      = "{\"job_id\":{\"stringValue\":\"training_job_example\"},\"job_name\":{\"stringValue\":\"SAMPLE FAKE JOB\"}}"
@@ -222,6 +217,7 @@ resource "google_firestore_document" "training_job_example" {
 resource "google_firestore_document" "processed_dataset_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "processed_datasets"
   document_id = "processed_dataset_example"
   fields      = "{\"processed_dataset_id\":{\"stringValue\":\"processed_dataset_example\"},\"dataset_name\":{\"stringValue\":\"SAMPLE FAKE DATASET\"}}"
@@ -230,7 +226,17 @@ resource "google_firestore_document" "processed_dataset_example" {
 resource "google_firestore_document" "dataset_example" {
   provider    = google-beta
   project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
   collection  = "datasets"
   document_id = "uploaded_dataset_example"
   fields      = "{\"uploaded_dataset_id\":{\"stringValue\":\"uploaded_dataset_example\"},\"dataset_name\":{\"stringValue\":\"SAMPLE FAKE UPLOADED DATASET\"}}"
+}
+
+resource "google_firestore_document" "export_example" {
+  provider    = google-beta
+  project     = google_firestore_database.gemma_database.project
+  database    = google_firestore_database.gemma_database.name
+  collection  = "exports"
+  document_id = "export_example"
+  fields      = "{\"job_id\":{\"stringValue\":\"training_job_example\"},\"export_id\":{\"stringValue\":\"export_example\"}}"
 }

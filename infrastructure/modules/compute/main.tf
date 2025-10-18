@@ -45,6 +45,11 @@ variable "files_bucket_name" {
   type        = string
 }
 
+variable "firestore_database_name" {
+  description = "Firestore database name"
+  type        = string
+}
+
 variable "training_image_tag" {
   description = "Training service image tag"
   type        = string
@@ -81,9 +86,24 @@ variable "inference_max_instances" {
   default     = 3
 }
 
+variable "vpc_connector_id" {
+  description = "ID of the VPC Access Connector"
+  type        = string
+}
+
+variable "vpc_network_name" {
+  description = "Name of the VPC network"
+  type        = string
+}
+
+variable "vpc_subnet_name" {
+  description = "Name of the VPC subnetwork"
+  type        = string
+}
+
 # Preprocessing Service
 resource "google_cloud_run_v2_service" "preprocessing_service" {
-  name     = "preprocessing-service"
+  name     = terraform.workspace == "default" ? "preprocessing-service" : "preprocessing-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -125,6 +145,11 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
         value = var.project_id
       }
 
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
+      }
+
       startup_probe {
         http_get {
           path = "/health"
@@ -151,7 +176,7 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
 
 # Training Service
 resource "google_cloud_run_v2_service" "training_service" {
-  name     = "training-service"
+  name     = terraform.workspace == "default" ? "training-service" : "training-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -198,6 +223,27 @@ resource "google_cloud_run_v2_service" "training_service" {
         value = var.project_id
       }
 
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
+      }
+
+    // these are required for gRPC client to call jobs
+      env {
+        name = "REGION"
+        value = var.region
+      }
+
+      env {
+        name = "TRAINING_JOB_NAME"
+        value = terraform.workspace == "default" ? "training-job" : "training-job-${terraform.workspace}"
+      }
+
+      env {
+        name = "EXPORT_JOB_NAME"
+        value = terraform.workspace == "default" ? "export-job" : "export-job-${terraform.workspace}"
+      }
+
       startup_probe {
         http_get {
           path = "/health"
@@ -221,7 +267,7 @@ resource "google_cloud_run_v2_service" "training_service" {
 
 # Inference Service
 resource "google_cloud_run_v2_service" "inference_service" {
-  name     = "inference-service"
+  name     = terraform.workspace == "default" ? "inference-service" : "inference-service-${terraform.workspace}"
   location = var.region
 
   template {
@@ -265,6 +311,11 @@ resource "google_cloud_run_v2_service" "inference_service" {
         value = var.project_id
       }
 
+      env {
+        name  = "FIRESTORE_DB"
+        value = var.firestore_database_name
+      }
+
       ports {
         container_port = 8080
       }
@@ -292,12 +343,17 @@ resource "google_cloud_run_v2_service" "inference_service" {
     node_selector {
       accelerator = "nvidia-l4"
     }
+
+    vpc_access {
+      connector = var.vpc_connector_id
+      egress    = "ALL_TRAFFIC"
+    }
   }
 }
 
 # Training Job (Cloud Run Job)
 resource "google_cloud_run_v2_job" "training_job" {
-  name     = "training-job"
+  name     = terraform.workspace == "default" ? "training-job" : "training-job-${terraform.workspace}"
   location = var.region
   launch_stage = "BETA"
   
@@ -344,6 +400,11 @@ resource "google_cloud_run_v2_job" "training_job" {
           name  = "PROJECT_ID"
           value = var.project_id
         }
+
+        env {
+          name  = "FIRESTORE_DB"
+          value = var.firestore_database_name
+        }
       }
 
       node_selector {
@@ -354,13 +415,20 @@ resource "google_cloud_run_v2_job" "training_job" {
       
       max_retries = 0
       timeout     = "3600s"
+
+      vpc_access {
+        connector = var.vpc_connector_id
+        egress    = "ALL_TRAFFIC"
+      }
     }
   }
+
+  
 }
 
 # Export job
 resource "google_cloud_run_v2_job" "export_job" {
-  name     = "export-job"
+  name     = terraform.workspace == "default" ? "export-job" : "export-job-${terraform.workspace}"
   location = var.region
   launch_stage = "BETA"
   
@@ -407,6 +475,11 @@ resource "google_cloud_run_v2_job" "export_job" {
           name  = "PROJECT_ID"
           value = var.project_id
         }
+
+        env {
+          name  = "FIRESTORE_DB"
+          value = var.firestore_database_name
+        }
       }
 
       node_selector {
@@ -417,6 +490,11 @@ resource "google_cloud_run_v2_job" "export_job" {
       
       max_retries = 0
       timeout     = "3600s"
+
+      vpc_access {
+        connector = var.vpc_connector_id
+        egress    = "ALL_TRAFFIC"
+      }
     }
   }
 }
