@@ -1,0 +1,140 @@
+llm:
+  provider: "api-endpoint"
+
+api-endpoint:
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
+  api_key: "${GEMINI_API_KEY}"  
+  model: "gemini-2.5-flash"
+  max_retries: 3
+  retry_delay: 15
+  sleep_time: 0.5
+  save_as:
+    user_column: "prompt" 
+    assistant_column: "completion"  
+
+generation:
+  temperature: 0.7
+  top_p: 0.95
+  processing_strategy: "auto"
+  single_call_max_size: 8000
+  chunk_size: 4000
+  overlap: 200
+  max_tokens: 4096
+  num_pairs: 25
+  num_cot_examples: 5
+  num_cot_enhance_examples: 5
+  batch_size: 32
+  enable_deduplication: true
+  similarity_threshold: 0.8
+
+prompts:
+  # Summary generation prompt
+  summary: |
+    Summarize this document in 3-5 sentences, focusing on the main topic and key concepts.
+  
+  # QA pair generation prompt
+  qa_generation: |
+    Create {num_pairs} question-answer pairs from this text for LLM training.
+    Brief summary of the text is: {summary}
+    
+    Rules:
+    1. Questions must be about important facts in the text
+    2. Answers must be directly supported by the text
+    3. Return JSON format only:
+    
+    [
+      {{
+        "question": "Question 1?",
+        "answer": "Answer 1."
+      }},
+      {{
+        "question": "Question 2?",
+        "answer": "Answer 2."
+      }}
+    ]
+    
+    Text:
+    {text}
+  
+  # QA pair rating prompt
+  qa_rating: |
+    Rate the following question-answer pairs on a scale from 1-10, based on:
+    - Accuracy (0-3): factual correctness
+    - Relevance (0-2): relevance to content
+    - Clarity (0-2): clear language
+    - Usefulness (0-3): value for model learning
+    
+    For each pair in the JSON list, return a JSON object with the rating. The output should be a JSON list of rating objects.
+
+    Example input:
+    [
+      {{
+        "question": "Question 1?",
+        "answer": "Answer 1."
+      }},
+      {{
+        "question": "Question 2?",
+        "answer": "Answer 2."
+      }}
+    ]
+
+    Example output:
+    [
+      {{
+        "rating": 8,
+        "explanation": "Brief explanation of rating for pair 1"
+      }},
+      {{
+        "rating": 5,
+        "explanation": "Brief explanation of rating for pair 2"
+      }}
+    ]
+
+    Pairs to rate:
+    {pairs}
+  
+  # Chain of Thought generation prompt
+  cot_generation: |
+    Create examples of step-by-step reasoning for these questions.
+    
+    For each question:
+    1. Break down the reasoning process
+    2. Show your work step-by-step
+    3. Arrive at the final answer
+    
+    Return in this JSON format:
+    [
+      {
+        "question": "Question text",
+        "reasoning": "Step 1: ... Step 2: ... Therefore...",
+        "answer": "Final answer"
+      }
+    ]
+    
+    Questions:
+    {questions}
+
+  # Chain of Thought enhancement prompt
+  cot_enhancement: |
+    Enhance these conversations by adding step-by-step reasoning to the assistant's responses.
+    
+    Include_simple_steps: {include_simple_steps}
+    
+    For each conversation:
+    1. Keep the user's message exactly the same
+    2. Add detailed reasoning to the assistant's response
+    3. Make sure the final answer matches the original intent
+    
+    Return the enhanced conversations in this JSON format:
+    [
+      {
+        "messages": [
+          {"role": "system", "content": "System message if present"},
+          {"role": "user", "content": "User's original message"},
+          {"role": "assistant", "content": "Let me think through this step by step:\n\nStep 1: ...\nStep 2: ...\n\nTherefore, the answer is: [original answer]"}
+        ]
+      }
+    ]
+    
+    Conversations to enhance:
+    {conversations}

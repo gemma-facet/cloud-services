@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyarrow>=20.0.0",
     "pillow>=10.0.0",
+    "synthetic-data-kit",
 ]
 
 [[tool.uv.index]]
@@ -35,3 +36,4 @@ explicit = true
 torch = [
   { index = "pytorch-cpu" },
 ]
+synthetic-data-kit = { path = "synthetic-data-kit", editable = true }
