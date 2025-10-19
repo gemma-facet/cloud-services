@@ -1,0 +1,3 @@
+[submodule "preprocessing/synthetic-data-kit"]
+	path = preprocessing/synthetic-data-kit
+	url = https://github.com/meta-llama/synthetic-data-kit.git
