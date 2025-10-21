@@ -37,7 +37,7 @@ Watch our demo video!! 👇👇
 
 1. Use it for free on our website platform: [https://gemma-facet.vercel.app/](https://gemma-facet.vercel.app/)
 
-2. Deploy the project to your own google cloud project with our Terraform and Cloud Build, see `infrastructure/README.md` for details.
+2. Deploy the project to your own google cloud project with our Terraform and Cloud Build scripts, see `infrastructure/README.md` for details. Since we're 100% IaC, you just need a single command!
 
 3. Use this as a reference to build your own fine-tuning service since we're fully open source!
 

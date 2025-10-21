@@ -86,10 +86,10 @@ variable "inference_max_instances" {
   default     = 3
 }
 
-variable "vpc_connector_id" {
-  description = "ID of the VPC Access Connector"
-  type        = string
-}
+# variable "vpc_connector_id" {
+#   description = "ID of the VPC Access Connector"
+#   type        = string
+# }
 
 variable "vpc_network_name" {
   description = "Name of the VPC network"
@@ -171,7 +171,17 @@ resource "google_cloud_run_v2_service" "preprocessing_service" {
     }
 
     max_instance_request_concurrency = 30
+
+    vpc_access {
+      network_interfaces {
+        network    = var.vpc_network_name
+        subnetwork = var.vpc_subnet_name
+      }
+      egress    = "ALL_TRAFFIC"
+    }
   }
+
+  
 }
 
 # Training Service
@@ -345,7 +355,10 @@ resource "google_cloud_run_v2_service" "inference_service" {
     }
 
     vpc_access {
-      connector = var.vpc_connector_id
+      network_interfaces {
+        network    = var.vpc_network_name
+        subnetwork = var.vpc_subnet_name
+      }
       egress    = "ALL_TRAFFIC"
     }
   }
@@ -417,7 +430,10 @@ resource "google_cloud_run_v2_job" "training_job" {
       timeout     = "3600s"
 
       vpc_access {
-        connector = var.vpc_connector_id
+        network_interfaces {
+          network    = var.vpc_network_name
+          subnetwork = var.vpc_subnet_name
+        }
         egress    = "ALL_TRAFFIC"
       }
     }
@@ -492,7 +508,10 @@ resource "google_cloud_run_v2_job" "export_job" {
       timeout     = "3600s"
 
       vpc_access {
-        connector = var.vpc_connector_id
+        network_interfaces {
+          network    = var.vpc_network_name
+          subnetwork = var.vpc_subnet_name
+        }
         egress    = "ALL_TRAFFIC"
       }
     }
