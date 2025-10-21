@@ -3,14 +3,7 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including C compiler for Triton and CUDA support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    build-essential \
-    wget \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for C compiler
 ENV CC=gcc
