@@ -111,6 +111,10 @@ For manual builds (this only works for staging environment):
 gcloud builds submit --config cloudbuild.dev.yaml --ignore-file .gcloudignore .
 ```
 
+### Staged Deployment
+
+Terraform is not capable of handling build steps such as building docker images. Therefore, we split the deployment into multiple stages to use Cloud Build for building images and Terraform for deploying infrastructure. Having separate `make deploy-core` and `make deploy-services` commands allows for more flexibility during development, for example avoiding the need to rebuilding images when only changes are made to the infrastructure.
+
 ## Available Commands
 
 ```bash

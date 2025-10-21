@@ -48,7 +48,6 @@ with Diagram("Facet AI - GCP Architecture v5", show=False, direction="LR"):
     networking = Cluster("Networking")
     with networking:
         vpc = VPC("VPC")
-        # vpc_connector = Node("VPC Connector")
         nat = NAT("Cloud NAT\n(Static IP)")
 
     external_services = Internet("External Services\n(e.g. Hugging Face)")
@@ -72,10 +71,4 @@ with Diagram("Facet AI - GCP Architecture v5", show=False, direction="LR"):
     [training_svc, inference] >> firestore
 
     # Outbound traffic via static IP
-    (
-        training_job
-        # >> vpc_connector
-        >> vpc
-        >> nat
-        >> external_services
-    )
+    (training_job >> vpc >> nat >> external_services)

@@ -98,21 +98,7 @@ resource "google_compute_subnetwork" "vpc_subnet" {
   project       = var.project_id
   region        = var.region
   network       = google_compute_network.vpc_network.id
-  ip_cidr_range = "10.0.0.0/28"
-}
-
-# VPC Access Connector
-resource "google_vpc_access_connector" "vpc_connector" {
-  name          = terraform.workspace == "default" ? "gemma-connector" : "gemma-connector-${terraform.workspace}"
-  project       = var.project_id
-  region        = var.region
-  subnet {
-    name = google_compute_subnetwork.vpc_subnet.name
-  }
-  machine_type = "e2-micro"
-  min_instances = 2
-  max_instances = 3
-  depends_on = [google_project_service.required_apis]
+  ip_cidr_range = "10.0.0.0/24"
 }
 
 # Cloud Router
