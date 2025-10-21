@@ -81,6 +81,16 @@ resource "google_artifact_registry_repository" "gemma_services" {
   
   labels = var.labels
 
+  # Cleanup policy to manage storage costs - keep only 3 most recent versions
+  cleanup_policies {
+    id     = "keep-recent-versions"
+    action = "KEEP"
+    
+    most_recent_versions {
+      keep_count = 3
+    }
+  }
+
   depends_on = [google_project_service.required_apis]
 }
 

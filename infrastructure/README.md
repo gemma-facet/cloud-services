@@ -150,9 +150,13 @@ terraform import module.compute.google_cloud_run_v2_service.preprocessing_servic
 
 ## Known Limitations
 
-- We currently do not use terraform to setup firestore authentication because enabling Google provider requires more effort that way. You STILL need to go to the console to look up the OAuth ID, etc, and will need to use cloud secrets. Currently the config sets up everything except the Google IDP, which you need to manually enable by going to Firebase Console > Authentication > Sign-in method > Google > Enable.
+We currently do not use terraform to setup firestore authentication because enabling Google provider requires more effort that way. You STILL need to go to the console to look up the OAuth ID, etc, and will need to use cloud secrets. Currently the config sets up everything except the Google IDP, which you need to manually enable by going to Firebase Console > Authentication > Sign-in method > Google > Enable.
 
-- You may run into an issue saying your project is not a quota project and doesn't allow you to turn on the identity management API. To fix this, go to IAM & Admin > Settings and set a billing account for the project or do `gcloud auth application-default set-quota-project <your-project-id>`.
+## Troubleshooting Identity Management API Issues
+
+This is unlikely to happen after the latest fix, but if you do run into issues with enabling the identity management API for Firebase, here are some steps to resolve it:
+
+You may run into an issue saying your project is not a quota project and doesn't allow you to turn on the identity management API. To fix this, go to IAM & Admin > Settings and set a billing account for the project or do `gcloud auth application-default set-quota-project <your-project-id>`. **However, this will likey happen again even after doing the previous step.** If so you need to follow the steps [shown in this repo](https://github.com/gindemit/TerraformGCPAuth) which somewhat complicated but works.
 
 ---
 

@@ -79,6 +79,30 @@ class ExportUtils:
         else:
             return "huggingface"
 
+    def _is_full_model(self, local_model_path: str) -> bool:
+        """
+        Detect if a model at the given path is a full fine-tuned model or a LoRA adapter.
+
+        A LoRA adapter contains an 'adapter_config.json' file.
+        A full model contains 'config.json' but NOT 'adapter_config.json'.
+
+        This allows us to distinguish between:
+        - Full fine-tuned models stored at artifacts.raw.adapter
+        - True LoRA adapters stored at artifacts.raw.adapter
+
+        Args:
+            local_model_path: Local path to the model directory
+
+        Returns:
+            bool: True if it's a full model, False if it's a LoRA adapter
+        """
+        import os
+
+        adapter_config_path = os.path.join(local_model_path, "adapter_config.json")
+        # If adapter_config.json exists, it's definitely a LoRA adapter
+        # If only config.json exists (no adapter_config.json), it's a full model
+        return not os.path.exists(adapter_config_path)
+
     # NOTE: The third return value is the tokenizer. However, we don't know the type of the tokenizer, so kept it as Any.
     # We don't need the tokenizer for the hf merged model, so we can keep it as None.
     def _merge_model(
@@ -652,6 +676,11 @@ class ExportUtils:
                 self._update_status("running", "Downloading adapter from GCS")
                 local_adapter_path = gcs_storage._download_directory(adapter_path)
 
+                if self._is_full_model(local_adapter_path):
+                    raise ValueError(
+                        "The adapter path points to a full fine-tuned model, not an adapter. Merged model export requires a LoRA adapter."
+                    )
+
                 self._update_status("running", "Merging model with adapter")
                 local_merged_path, model, tokenizer = self._merge_model(
                     local_adapter_path,
@@ -792,31 +821,41 @@ class ExportUtils:
                 self._update_status("running", "Downloading adapter from GCS")
                 local_adapter_path = gcs_storage._download_directory(adapter_path)
 
-                self._update_status("running", "Merging model with adapter")
-                # Merge model locally
-                local_merged_path, _, _ = self._merge_model(
-                    local_adapter_path,
-                    self.job_doc.base_model_id,
-                    self.job_id,
-                    self.hf_token,
-                    cleanup_temp=False,
-                )
+                # Check if this is actually a full fine-tuned model (not a LoRA adapter)
+                # Full models have config.json but NOT adapter_config.json
+                # If it's a full model, we can skip the merge step and use it directly
+                if self._is_full_model(local_adapter_path):
+                    logger.info(
+                        "Detected full fine-tuned model (not a LoRA adapter); skipping merge step"
+                    )
+                    local_merged_path = local_adapter_path
+                else:
+                    # This is a true LoRA adapter, so we need to merge it with the base model
+                    self._update_status("running", "Merging model with adapter")
+                    # Merge model locally
+                    local_merged_path, _, _ = self._merge_model(
+                        local_adapter_path,
+                        self.job_doc.base_model_id,
+                        self.job_id,
+                        self.hf_token,
+                        cleanup_temp=False,
+                    )
 
-                # Clean up downloaded adapter
-                gcs_storage._cleanup_local_directory(local_adapter_path)
+                    # Clean up downloaded adapter after merging
+                    gcs_storage._cleanup_local_directory(local_adapter_path)
 
-                # Upload merged model to export bucket for raw artifacts
-                export_destination = (
-                    f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
-                )
-                merged_gcs_path = gcs_storage._upload_directory(
-                    local_merged_path, export_destination
-                )
+                    # Upload merged model to export bucket for raw artifacts
+                    export_destination = (
+                        f"gs://{gcs_storage.export_bucket}/merged_models/{self.job_id}"
+                    )
+                    merged_gcs_path = gcs_storage._upload_directory(
+                        local_merged_path, export_destination
+                    )
 
-                # Update raw artifacts
-                self._update_job_artifacts("merged", "raw", merged_gcs_path)
-                self._update_export_artifacts("merged", "raw", merged_gcs_path)
-                logger.info(f"Updated raw merged model path: {merged_gcs_path}")
+                    # Update raw artifactsx
+                    self._update_job_artifacts("merged", "raw", merged_gcs_path)
+                    self._update_export_artifacts("merged", "raw", merged_gcs_path)
+                    logger.info(f"Updated raw merged model path: {merged_gcs_path}")
 
             # Convert to GGUF
             self._update_status("running", "Converting model to GGUF format")
