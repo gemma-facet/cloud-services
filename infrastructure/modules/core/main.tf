@@ -30,7 +30,8 @@ resource "google_project_service" "required_apis" {
     "iam.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "vpcaccess.googleapis.com",
-    "compute.googleapis.com"
+    "compute.googleapis.com",
+    "identitytoolkit.googleapis.com",
   ])
   
   project = var.project_id

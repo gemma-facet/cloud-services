@@ -29,8 +29,9 @@ resource "google_firebase_project" "gemma_project" {
 
 # Firebase Authentication
 resource "google_identity_platform_config" "auth_config" {
-  count   = var.enable_firebase ? 1 : 0
-  project = var.project_id
+  count    = var.enable_firebase ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
   
   sign_in {
     allow_duplicate_emails = false
@@ -44,6 +45,13 @@ resource "google_identity_platform_config" "auth_config" {
       password_required = true
     }
   }
+
+  authorized_domains = [
+    "localhost",
+    "${google_firebase_project.gemma_project[0].project}.firebaseapp.com",
+    "${google_firebase_project.gemma_project[0].project}.web.app",
+    "${google_firebase_project.gemma_project[0].project}.vercel.app",
+  ]
   
   depends_on = [google_firebase_project.gemma_project]
 }
