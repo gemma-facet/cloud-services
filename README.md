@@ -6,7 +6,7 @@ We cannot wait to see what you bring to the **Gemmaverse** with Facet AI!
 
 ## Background
 
-Cookbooks and Colab notebooks are amazing, except that they don't scale when you have multiple datasets, models, and experiments to track. Facet AI not only provides an open-sourced backend to streamline and centralize all your fine-tuning needs, but also makes it easy for non-technical users to leverage the power of cutting-edge post-training techniques and Google Cloud without writing a single line of code.
+Cookbooks and Colab notebooks are amazing, except that they don't scale when you have multiple datasets, models, and experiments to track. Facet AI not only provides an open-sourced backend to streamline and centralize all your fine-tuning needs, but also makes it easy for non-technical users to leverage the power of cutting-edge post-training techniques and Google Cloud without writing a single line of code. We're 100% IaC so it's extremely easy to deploy on your own cloud.
 
 Watch our demo video!! 👇👇
 
@@ -43,7 +43,7 @@ Watch our demo video!! 👇👇
 
 ## Architecture
 
-![Architecture Diagram](infrastructure/facet-gcp-v3.png)
+![Architecture Diagram](infrastructure/facet-gcp-v5.png)
 
 ## Documentation
 
