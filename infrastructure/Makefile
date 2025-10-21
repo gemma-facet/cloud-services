@@ -98,10 +98,11 @@ deploy: init ## Deploy infrastructure to current environment
 .PHONY: deploy-core
 deploy-core: init ## Deploy core infrastructure (APIs, registry, storage)
 	@echo "$(YELLOW)Deploying core infrastructure to $(ENVIRONMENT) (workspace: $(WORKSPACE))...$(NC)"
-	@echo "$(BLUE)Stage 1: APIs, registry, and storage$(NC)"
+	@echo "$(BLUE)Stage 1: APIs, registry, storage, firebase$(NC)"
 	@terraform apply -var-file=environments/$(ENVIRONMENT).tfvars \
 		-target=module.core \
-		-target=module.storage
+		-target=module.storage \
+		-target=module.firebase
 	@echo "$(GREEN)✓ Core infrastructure deployed to $(ENVIRONMENT)$(NC)"
 
 .PHONY: deploy-services
@@ -119,7 +120,8 @@ plan-core: init ## Plan core infrastructure only
 	@echo "$(BLUE)Planning core infrastructure for $(ENVIRONMENT) (workspace: $(WORKSPACE))...$(NC)"
 	@terraform plan -var-file=environments/$(ENVIRONMENT).tfvars \
 		-target=module.core \
-		-target=module.storage
+		-target=module.storage \
+		-target=module.firebase
 
 .PHONY: plan-services
 plan-services: init ## Plan Cloud Run services only
@@ -138,7 +140,31 @@ full-deploy: ## Full deployment: core -> build -> services
 
 .PHONY: output
 output: ## Show infrastructure outputs
-	@terraform output -json | jq -r 'to_entries[] | "\(.key): \(.value.value)"' 2>/dev/null || terraform output
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)  Copy the following values to your frontend .env file:$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(YELLOW)API_GATEWAY_URL$(NC)=$(GREEN)$$(terraform output -raw api_gateway_url 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)INFERENCE_SERVICE_URL$(NC)=$(GREEN)$$(terraform output -raw inference_service_url 2>/dev/null || echo 'N/A')$(NC)"
+	@echo ""
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_API_KEY$(NC)=$(GREEN)$$(terraform output -raw firebase_api_key 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN$(NC)=$(GREEN)$$(terraform output -raw firebase_auth_domain 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_PROJECT_ID$(NC)=$(GREEN)$$(terraform output -raw firebase_project_id 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET$(NC)=$(GREEN)$$(terraform output -raw firebase_storage_bucket 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID$(NC)=$(GREEN)$$(terraform output -raw firebase_messaging_sender_id 2>/dev/null || echo 'N/A')$(NC)"
+	@echo "$(YELLOW)NEXT_PUBLIC_FIREBASE_APP_ID$(NC)=$(GREEN)$$(terraform output -raw firebase_app_id 2>/dev/null || echo 'N/A')$(NC)"
+	@echo ""
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)  Backend Infrastructure (Internal)$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(YELLOW)Preprocessing Service:$(NC)   $$(terraform output -raw preprocessing_service_url 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Training Service:$(NC)        $$(terraform output -raw training_service_url 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Data Bucket:$(NC)             $$(terraform output -raw data_bucket_name 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Export Bucket:$(NC)           $$(terraform output -raw export_bucket_name 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Files Bucket:$(NC)            $$(terraform output -raw files_bucket_name 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Config Bucket:$(NC)           $$(terraform output -raw config_bucket_name 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Artifact Registry:$(NC)       $$(terraform output -raw artifact_registry_repo_url 2>/dev/null || echo 'N/A')"
+	@echo "$(YELLOW)Service Account:$(NC)         $$(terraform output -raw service_account_email 2>/dev/null || echo 'N/A')"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
 
 .PHONY: destroy
 destroy: check init ## Destroy all infrastructure for current environment

@@ -4,7 +4,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install system dependencies including C compiler for Triton and CUDA support
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
@@ -22,11 +22,15 @@ RUN pip install --no-cache-dir uv
 # Copy requirements and install Python dependencies using UV
 COPY pyproject.toml uv.lock ./
 
-RUN uv venv && uv sync --frozen --no-cache && uv pip list
+# Set environment for venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 
-# RUN uv pip install --upgrade unsloth unsloth_zoo
-
-# RUN uv pip install "xformers<0.0.27" --no-build-isolation --no-deps
+# Create virtual environment and install dependencies
+RUN uv venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    uv sync --frozen --no-cache && \
+    uv pip list
 
 # Copy application code
 COPY . .
@@ -34,10 +38,11 @@ COPY . .
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PORT=8080
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV=/opt/venv
 
 # Expose port
 EXPOSE 8080
 
 # Run the application
-CMD ["uv", "run", "app.py"]
+CMD ["python", "app.py"]

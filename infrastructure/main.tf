@@ -16,11 +16,15 @@ terraform {
 # Provider configuration
 provider "google" {
   project = var.project_id
+  billing_project = var.project_id
+  user_project_override = true
   region  = var.region
 }
 
 provider "google-beta" {
   project = var.project_id
+  billing_project = var.project_id
+  user_project_override = true
   region  = var.region
 }
 
@@ -49,16 +53,16 @@ module "storage" {
 }
 
 # Firebase Module
-# module "firebase" {
-#   source = "./modules/firebase"
+module "firebase" {
+  source = "./modules/firebase"
   
-#   project_id        = var.project_id
-#   labels            = var.labels
-#   enable_firebase   = true
-#   firebase_location = "us-central"
+  project_id        = var.project_id
+  labels            = var.labels
+  enable_firebase   = true
+  firebase_location = "us-central"
   
-#   depends_on = [module.core]
-# }
+  depends_on = [module.core]
+}
 
 # Cloud Run Services Module
 module "compute" {
