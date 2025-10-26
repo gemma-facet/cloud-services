@@ -32,6 +32,8 @@ cd cloud-services/infrastructure
 
 2. **Authenticate with GCP**
 
+First create a GCP project from the console. We don't automate this step because for beginners, you still need the console to setup billing, and for advanced users, creating projects is pretty straightforward.
+
 ```bash
 gcloud auth login
 # Set your project
@@ -67,25 +69,7 @@ make output ENV=staging
 
 4. **Use the results**
 
-From the outputs, get the URLs from the API Gateway and Inference service and set them in the frontend `.env` file when you deploy the next.js app:
-
-```bash
-INFERENCE_SERVICE_URL=url-from-terraform-output
-API_GATEWAY_URL=url-from-terraform-output
-```
-
-In addition, you need to obtain the firebase config from the Firebase Console and set them in the frontend `.env` file:
-
-```bash
-NEXT_PUBLIC_FIREBASE_API_KEY=your-firebase-api-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-firebase-auth-domain
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-firebase-project-id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-firebase-storage-bucket
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-firebase-messaging-sender-id
-NEXT_PUBLIC_FIREBASE_APP_ID=your-firebase-app-id
-```
-
-We hope to automate the second step as well but cannot yet find a way to avoid needing the console.
+After running `make output`, the first section contains API endpoints and firebase configuration values that you can **directly copy and paste into your frontend `.env` file**. You do not need to access any GCP or firebase console unless you want to setup Google OAuth which is optional.
 
 ## How this works
 
@@ -110,6 +94,10 @@ For manual builds (this only works for staging environment):
 ```bash
 gcloud builds submit --config cloudbuild.dev.yaml --ignore-file .gcloudignore .
 ```
+
+### Staged Deployment
+
+Terraform is not capable of handling build steps such as building docker images. Therefore, we split the deployment into multiple stages to use Cloud Build for building images and Terraform for deploying infrastructure. Having separate `make deploy-core` and `make deploy-services` commands allows for more flexibility during development, for example avoiding the need to rebuilding images when only changes are made to the infrastructure.
 
 ## Available Commands
 
@@ -162,9 +150,13 @@ terraform import module.compute.google_cloud_run_v2_service.preprocessing_servic
 
 ## Known Limitations
 
-- We currently do not use terraform to setup firestore authentication because enabling Google provider requires more effort that way. You STILL need to go to the console to look up the OAuth ID, etc, and will need to use cloud secrets. Currently the config sets up everything except the Google IDP, which you need to manually enable by going to Firebase Console > Authentication > Sign-in method > Google > Enable.
+We currently do not use terraform to setup firestore authentication because enabling Google provider requires more effort that way. You STILL need to go to the console to look up the OAuth ID, etc, and will need to use cloud secrets. Currently the config sets up everything except the Google IDP, which you need to manually enable by going to Firebase Console > Authentication > Sign-in method > Google > Enable.
 
-- You may run into an issue saying your project is not a quota project and doesn't allow you to turn on the identity management API. To fix this, go to IAM & Admin > Settings and set a billing account for the project or do `gcloud auth application-default set-quota-project <your-project-id>`.
+## Troubleshooting Identity Management API Issues
+
+This is unlikely to happen after the latest fix, but if you do run into issues with enabling the identity management API for Firebase, here are some steps to resolve it:
+
+You may run into an issue saying your project is not a quota project and doesn't allow you to turn on the identity management API. To fix this, go to IAM & Admin > Settings and set a billing account for the project or do `gcloud auth application-default set-quota-project <your-project-id>`. **However, this will likey happen again even after doing the previous step.** If so you need to follow the steps [shown in this repo](https://github.com/gindemit/TerraformGCPAuth) which somewhat complicated but works.
 
 ---
 

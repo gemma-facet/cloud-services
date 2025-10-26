@@ -47,3 +47,34 @@ output "service_account_email" {
   description = "Email of the service account"
   value       = module.core.service_account_email
 }
+
+# Firebase Frontend Configuration
+output "firebase_api_key" {
+  description = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY)"
+  value       = module.firebase.firebase_api_key
+}
+
+output "firebase_auth_domain" {
+  description = "Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)"
+  value       = module.firebase.firebase_auth_domain
+}
+
+output "firebase_project_id" {
+  description = "Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID)"
+  value       = module.firebase.firebase_project_id
+}
+
+output "firebase_storage_bucket" {
+  description = "Firebase Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)"
+  value       = module.firebase.firebase_storage_bucket
+}
+
+output "firebase_messaging_sender_id" {
+  description = "Firebase Messaging Sender ID (NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)"
+  value       = module.firebase.firebase_messaging_sender_id
+}
+
+output "firebase_app_id" {
+  description = "Firebase App ID (NEXT_PUBLIC_FIREBASE_APP_ID)"
+  value       = module.firebase.firebase_app_id
+}
