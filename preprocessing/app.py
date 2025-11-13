@@ -14,6 +14,7 @@ from schema import (
     DatasetsInfoResponse,
     DatasetInfoResponse,
     DatasetDeleteResponse,
+    DatasetSynthesizeResponse,
     MIME_TYPES,
 )
 
@@ -138,6 +139,28 @@ async def upload_dataset(
         logger.error(f"Error uploading dataset: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
+@app.post("/datasets/synthesize", response_model=DatasetSynthesizeResponse)
+def synthesize_dataset(
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Synthesize a dataset using the dataset synthesizer service"""
+    try:
+        file_content = file.file.read()
+        filename = file.filename or ""
+        dataset,storage_path = dataset_service.synthesize_dataset(
+            file_data=file_content,
+            filename=filename,
+            metadata={"user_id": current_user_id},
+            )
+        return {
+            "filename": filename,
+            "gcs_path": storage_path,
+        }
+
+    except Exception as e:
+        logger.error(f"Error synthesizing dataset: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 @app.post("/datasets/process", response_model=ProcessingResult)
 def process_dataset(

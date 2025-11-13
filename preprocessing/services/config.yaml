@@ -1,32 +1,64 @@
+# Master configuration file for Synthetic Data Kit
+
+# Global paths configuration
+paths:
+  # Input data location (directory containing files to process)
+  input: "data/input"           # Directory containing PDF, HTML, DOCX, PPT, TXT files
+  
+  # Output locations (4-stage pipeline directories)
+  output:
+    parsed: "data/parsed"       # Stage 1: Where parsed text files are saved (ingest output)
+    generated: "data/generated" # Stage 2: Where generated QA pairs are saved (create output)
+    curated: "data/curated"     # Stage 3: Where curated QA pairs are saved (curate output)
+    final: "data/final"         # Stage 4: Where final training formats are saved (save-as output)
+
+# LLM Provider configuration
 llm:
+  # Provider selection: "vllm" or "api-endpoint"
   provider: "api-endpoint"
-
+  
+# API endpoint configuration
 api-endpoint:
-  api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
-  api_key: "${GEMINI_API_KEY}"  
-  model: "gemini-2.5-flash"
-  max_retries: 3
-  retry_delay: 15
-  sleep_time: 0.5
-  save_as:
-    user_column: "prompt" 
-    assistant_column: "completion"  
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai" # Optional base URL for API endpoint (null for default API)
+  api_key: "API-key"               # API key for API endpoint or compatible service (can use env var instead)
+  model: "gemini-2.0-flash" # Default model to use
+  max_retries: 3                       # Number of retries for API calls
+  retry_delay: 1.0                     # Initial delay between retries (seconds)
+  sleep_time: 0.5                      # Small delay in seconds between batches to avoid rate limits
 
+# Ingest configuration
+ingest:
+  default_format: "txt"  # Default output format for parsed files
+  youtube_captions: "auto"  # Options: "auto", "manual" - caption preference
+
+# LLM generation parameters
 generation:
-  temperature: 0.7
-  top_p: 0.95
-  processing_strategy: "auto"
-  single_call_max_size: 8000
-  chunk_size: 4000
-  overlap: 200
-  max_tokens: 4096
-  num_pairs: 25
-  num_cot_examples: 5
-  num_cot_enhance_examples: 5
-  batch_size: 32
-  enable_deduplication: true
-  similarity_threshold: 0.8
+  temperature: 0.7   # Higher = more creative, lower = more deterministic
+  top_p: 0.95        # Nucleus sampling parameter
+  chunk_size: 4000   # Size of text chunks for processing
+  overlap: 200       # Overlap between chunks to maintain context
+  max_tokens: 4096   # Maximum tokens in LLM responses
+  num_pairs: 5      # Default number of QA pairs to generate
+  num_cot_examples: 5  # Default number of Chain of Thought examples to generate
+  num_cot_enhance_examples: null  # Maximum number of conversations to enhance (null = enhance all)
+  batch_size: 32     # Number of requests to batch together (for create)
+  max_context_length: 8000       # Context Length of the MODEL. Useful while Generating Summary
+  summary_overlap: 0       # Overlap between chunks to maintain context. Useful while Generating Summary
+  
+# Content curation parameters
+curate:
+  threshold: 7.0     # Default quality threshold (1-10)
+  batch_size: 5      # Number of items per batch for rating (smaller batches for API stability)
+  inference_batch: 5 # Number of batches to process at once with VLLM
+  temperature: 0.1   # Temperature for rating (lower = more consistent)
 
+# Format conversion parameters
+format:
+  default: "jsonl"   # Default output format
+  include_metadata: true  # Include metadata in output files
+  pretty_json: true  # Use indentation in JSON output
+
+# Prompts for different tasks
 prompts:
   # Summary generation prompt
   summary: |
@@ -34,8 +66,7 @@ prompts:
   
   # QA pair generation prompt
   qa_generation: |
-    Create {num_pairs} question-answer pairs from this text for LLM training.
-    Brief summary of the text is: {summary}
+    Create question-answer pairs from this text for LLM training.
     
     Rules:
     1. Questions must be about important facts in the text
@@ -58,83 +89,78 @@ prompts:
   
   # QA pair rating prompt
   qa_rating: |
-    Rate the following question-answer pairs on a scale from 1-10, based on:
+    Rate each question-answer pair on a scale from 1-10, based on:
     - Accuracy (0-3): factual correctness
     - Relevance (0-2): relevance to content
     - Clarity (0-2): clear language
     - Usefulness (0-3): value for model learning
     
-    For each pair in the JSON list, return a JSON object with the rating. The output should be a JSON list of rating objects.
-
-    Example input:
+    YOU MUST RETURN A VALID JSON OBJECT OR ARRAY WITH THIS EXACT SCHEMA:
+    {{
+      "question": "Exact question text",
+      "answer": "Exact answer text",
+      "rating": 8
+    }}
+    
+    OR FOR MULTIPLE PAIRS:
     [
-      {{
-        "question": "Question 1?",
-        "answer": "Answer 1."
-      }},
-      {{
-        "question": "Question 2?",
-        "answer": "Answer 2."
-      }}
+      {{"question": "Q1", "answer": "A1", "rating": 8}},
+      {{"question": "Q2", "answer": "A2", "rating": 9}}
     ]
-
-    Example output:
-    [
-      {{
-        "rating": 8,
-        "explanation": "Brief explanation of rating for pair 1"
-      }},
-      {{
-        "rating": 5,
-        "explanation": "Brief explanation of rating for pair 2"
-      }}
-    ]
-
-    Pairs to rate:
+    
+    *** YOUR RESPONSE MUST BE VALID JSON AND NOTHING ELSE - NO EXPLANATION, NO MARKDOWN ***
+    
+    QA pairs to rate:
     {pairs}
-  
+    
   # Chain of Thought generation prompt
   cot_generation: |
-    Create examples of step-by-step reasoning for these questions.
+    Create complex reasoning examples from this text that demonstrate chain-of-thought thinking.
     
-    For each question:
-    1. Break down the reasoning process
-    2. Show your work step-by-step
-    3. Arrive at the final answer
+    Each example should have:
+    1. A challenging question that requires step-by-step reasoning
+    2. Detailed reasoning steps that break down the problem
+    3. A concise final answer
     
-    Return in this JSON format:
+    Return JSON format only:
+    
     [
-      {
-        "question": "Question text",
-        "reasoning": "Step 1: ... Step 2: ... Therefore...",
-        "answer": "Final answer"
-      }
+      {{
+        "question": "Complex question about the text?",
+        "reasoning": "Step 1: First, I need to consider...\nStep 2: Then, I analyze...\nStep 3: Finally, I can conclude...",
+        "answer": "Final answer based on the reasoning."
+      }},
+      {{
+        "question": "Another complex question?",
+        "reasoning": "Step 1: First, I'll analyze...\nStep 2: Next, I need to determine...\nStep 3: Based on this analysis...",
+        "answer": "Final answer drawn from the reasoning."
+      }}
     ]
     
-    Questions:
-    {questions}
-
+    Text:
+    {text}
+  
   # Chain of Thought enhancement prompt
   cot_enhancement: |
-    Enhance these conversations by adding step-by-step reasoning to the assistant's responses.
+    You are an expert reasoning assistant. Your task is to enhance the given conversations by adding chain-of-thought reasoning.
     
-    Include_simple_steps: {include_simple_steps}
+    For each conversation, add detailed step-by-step reasoning to the assistant's responses while preserving the original answer.
     
-    For each conversation:
-    1. Keep the user's message exactly the same
-    2. Add detailed reasoning to the assistant's response
-    3. Make sure the final answer matches the original intent
+    {include_simple_steps} = Whether to add reasoning to simple responses too. If false, only add reasoning to complex responses.
     
-    Return the enhanced conversations in this JSON format:
+    Return the enhanced conversations as a JSON array matching this format:
     [
-      {
-        "messages": [
-          {"role": "system", "content": "System message if present"},
-          {"role": "user", "content": "User's original message"},
-          {"role": "assistant", "content": "Let me think through this step by step:\n\nStep 1: ...\nStep 2: ...\n\nTherefore, the answer is: [original answer]"}
-        ]
-      }
+      [
+        {{"role": "system", "content": "System message"}},
+        {{"role": "user", "content": "User question"}},
+        {{"role": "assistant", "content": "Let me think through this step by step:\n\n1. First, I need to consider...\n2. Then...\n\nTherefore, [original answer]"}}
+      ],
+      [
+        {{"role": "system", "content": "System message"}},
+        {{"role": "user", "content": "Another user question"}},
+        {{"role": "assistant", "content": "Let me work through this:\n\n1. I'll start by...\n2. Next...\n\nIn conclusion, [original answer]"}}
+      ]
     ]
     
-    Conversations to enhance:
+    Original conversations:
     {conversations}

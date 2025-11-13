@@ -9,6 +9,7 @@ from storage.base import StorageInterface
 from .dataset_handler import DatasetHandler
 from .dataset_loader import DatasetLoader
 from .format_converter import FormatConverter
+from .dataaset_synthesizer import DatasetSynthesizer , config_path
 from augmentation import run_augment_pipeline
 from schema import (
     DatasetUploadResponse,
@@ -61,7 +62,7 @@ class DatasetService:
         self.handler = DatasetHandler(storage)
         self.loader = DatasetLoader(storage)
         self.converter = FormatConverter()
-
+        self.synthesizer = DatasetSynthesizer()
     def upload_dataset(
         self, file_data: bytes, filename: str, metadata: Optional[Dict] = None
     ) -> DatasetUploadResponse:
@@ -106,6 +107,26 @@ class DatasetService:
             ... )
         """
         return self.handler.upload_dataset(file_data, filename, metadata)
+
+    def synthesize_dataset(
+        self,  file_data: bytes, filename: str,  metadata: Optional[Dict] = None
+    ) -> Dict:
+        """ Complete synthetic data generation pipeline from file ingestion to dataset creation
+        
+        Returns:
+            HF Datset: Huggingface dataset object containing curated QA pairs
+        """
+        from pathlib import Path
+        
+        storage_path = self.handler.upload_dataset(file_data, filename, metadata)
+        file_path = storage_path.replace("file://","")
+        output_dir = str(Path(file_path).parent)
+        dataset = self.synthesizer.synthesize_dataset(
+            file_path=file_path,
+            config_path=config_path,
+            output_dir= output_dir
+        )
+        return dataset, storage_path
 
     def process_dataset(
         self,
