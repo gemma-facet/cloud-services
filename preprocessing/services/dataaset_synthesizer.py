@@ -56,5 +56,4 @@ class DatasetSynthesizer:
         )
         print("Reached curated pair generated step...")
         dataset = Dataset.from_json(curated_pairs)
-        qa_only = dataset.select_columns(["qa_pairs"]) #["qa_pairs", "conversations"] if needed
-        return qa_only
+        return dataset.select_columns(["conversations"])
