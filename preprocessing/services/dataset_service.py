@@ -9,7 +9,7 @@ from storage.base import StorageInterface
 from .dataset_handler import DatasetHandler
 from .dataset_loader import DatasetLoader
 from .format_converter import FormatConverter
-from .dataaset_synthesizer import DatasetSynthesizer , config_path
+from .dataset_synthesizer import DatasetSynthesizer
 from augmentation import run_augment_pipeline
 from schema import (
     DatasetUploadResponse,
@@ -63,6 +63,7 @@ class DatasetService:
         self.loader = DatasetLoader(storage)
         self.converter = FormatConverter()
         self.synthesizer = DatasetSynthesizer()
+
     def upload_dataset(
         self, file_data: bytes, filename: str, metadata: Optional[Dict] = None
     ) -> DatasetUploadResponse:
@@ -109,24 +110,128 @@ class DatasetService:
         return self.handler.upload_dataset(file_data, filename, metadata)
 
     def synthesize_dataset(
-        self,  file_data: bytes, filename: str,  metadata: Optional[Dict] = None
-    ) -> Dict:
-        """ Complete synthetic data generation pipeline from file ingestion to dataset creation
-        
+        self,
+        file_data: bytes,
+        filename: str,
+        synthesis_config: Optional[Dict] = None,
+    ) -> tuple[str, str, dict]:
+        """
+        Complete synthetic data generation pipeline from file ingestion to dataset creation.
+
+        This method:
+        1. Saves the input file temporarily (locally)
+        2. Synthesizes a QA dataset from the file using customizable parameters
+        3. Uploads the synthesized dataset as a processed dataset
+        4. Returns metadata for tracking
+
+        Args:
+            file_data (bytes): The raw file data (PDF, DOCX, etc.)
+            filename (str): The original name of the file
+            synthesis_config (Optional[Dict]): Configuration for synthesis parameters:
+                - gemini_api_key: Gemini API key for this request (REQUIRED)
+                - dataset_name: Name for the synthesized dataset (REQUIRED)
+                - num_pairs: Number of QA pairs to generate per chunk (default: 5)
+                - temperature: LLM temperature (default: 0.7)
+                - chunk_size: Text chunk size in characters (default: 4000)
+                - chunk_overlap: Chunk overlap in characters (default: 200)
+                - threshold: Quality threshold for curation 1-10 (default: 7.0)
+                - batch_size: Batch size for rating (default: 5)
+
         Returns:
-            HF Datset: Huggingface dataset object containing curated QA pairs
+            tuple[str, str, dict]: A tuple containing (dataset_path, processed_dataset_id, metadata)
+                - dataset_path: Storage path for the synthesized dataset
+                - processed_dataset_id: Unique identifier for the synthesized dataset
         """
         from pathlib import Path
-        
-        storage_path = self.handler.upload_dataset(file_data, filename, metadata)
-        file_path = storage_path.replace("file://","")
-        output_dir = str(Path(file_path).parent)
-        dataset = self.synthesizer.synthesize_dataset(
-            file_path=file_path,
-            config_path=config_path,
-            output_dir= output_dir
-        )
-        return dataset, storage_path
+        import tempfile
+        import os
+        from datasets import Dataset, DatasetDict
+
+        # Create a temporary file to store the input data
+        # (synthesizer needs a file path, not bytes)
+        suffix = Path(filename).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            tmp_file.write(file_data)
+            tmp_file_path = tmp_file.name
+
+        try:
+            # Use the temp directory as output directory
+            output_dir = str(Path(tmp_file_path).parent)
+
+            # Extract synthesis parameters from config or use defaults
+            config = synthesis_config or {}
+
+            # Extract and validate required fields
+            gemini_api_key = config.get("gemini_api_key")
+            if not gemini_api_key:
+                raise ValueError(
+                    "gemini_api_key is required in synthesis_config. "
+                    "Please provide your Gemini API key for synthesis."
+                )
+
+            dataset_name = config.get("dataset_name")
+            if not dataset_name:
+                raise ValueError(
+                    "dataset_name is required in synthesis_config. "
+                    "Please provide a name for your synthesized dataset."
+                )
+
+            num_pairs = config.get("num_pairs", 5)
+            temperature = config.get("temperature", 0.7)
+            chunk_size = config.get("chunk_size", 4000)
+            chunk_overlap = config.get("chunk_overlap", 200)
+            threshold = config.get("threshold", 7.0)
+            batch_size = config.get("batch_size", 5)
+            multimodal = config.get("multimodal", False)
+
+            # Synthesize the dataset (returns HuggingFace Dataset)
+            synthesized_dataset = self.synthesizer.synthesize_dataset(
+                file_path=tmp_file_path,
+                gemini_api_key=gemini_api_key,
+                output_dir=output_dir,
+                num_pairs=num_pairs,
+                temperature=temperature,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                threshold=threshold,
+                batch_size=batch_size,
+                multimodal=multimodal,
+            )
+
+            # Convert to DatasetDict with a single "train" split
+            if isinstance(synthesized_dataset, Dataset):
+                dataset_dict = DatasetDict({"train": synthesized_dataset})
+            elif isinstance(synthesized_dataset, DatasetDict):
+                dataset_dict = synthesized_dataset
+            else:
+                raise ValueError(
+                    f"Unexpected dataset type: {type(synthesized_dataset)}"
+                )
+
+            # Create a minimal config for the upload
+            from schema import PreprocessingConfig
+
+            config = PreprocessingConfig()
+
+            # Upload as a processed dataset (saves to GCS and generates metadata)
+            dataset_path, processed_dataset_id, upload_metadata = (
+                self.handler.upload_processed_dataset(
+                    dataset=dataset_dict,
+                    dataset_name=dataset_name,
+                    dataset_id="synthesized",  # No source dataset
+                    dataset_subset="default",
+                    config=config,
+                    dataset_source="upload",  # Mark as uploaded/synthesized
+                    modality="text",  # Synthesized datasets are text-based QA
+                )
+            )
+
+            return dataset_path, processed_dataset_id, upload_metadata
+
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_file_path):
+                os.unlink(tmp_file_path)
 
     def process_dataset(
         self,

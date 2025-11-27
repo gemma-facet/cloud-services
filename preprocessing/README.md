@@ -378,6 +378,10 @@ Vision processing is automatically enabled when image field mappings are detecte
 - `user_field` and `system_field` work the same way as in language modeling, but the `assistant_field` is not used.
 - Unlike language modeling, current research indicates that ONLY ONE image is allowed, but the conversion works the same
 
+## Synthetic Dataset Generation
+
+We leverage Gemini's dataset synthesis capabilities to generate synthetic datasets for fine-tuning. You can use the `/datasets/synthesize` endpoint to create datasets based on specified prompts and configurations.
+
 ## Metadata Management
 
 The preprocessing service uses a hybrid storage approach:

@@ -13,6 +13,9 @@ wheels/
 archive/
 .env
 
+# Runtime config files with injected secrets
+**/config.runtime.yaml
+
 designs/
 
 # For now we ignore these random test files, in future will put in test directory
