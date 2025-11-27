@@ -16,6 +16,7 @@ MIME_TYPES = {
     "parquet": "application/vnd.apache.parquet",
 }
 
+
 class ProcessingMode(str, Enum):
     """
     Specifies the preprocessing mode to format the dataset for a specific fine-tuning task.
@@ -150,6 +151,15 @@ class DatasetsInfoResponse(BaseModel):
     datasets: List[DatasetInfoSample]
 
 
+class RawDatasetInfo(BaseModel):
+    dataset_id: str
+    filename: str
+
+
+class RawDatasetsResponse(BaseModel):
+    datasets: List[RawDatasetInfo]
+
+
 class DatasetInfoFull(BaseModel):
     dataset_name: str
     dataset_subset: str
@@ -172,3 +182,24 @@ class DatasetDeleteResponse(BaseModel):
     message: str
     deleted_files_count: int
     deleted_resources: Optional[List[str]] = None
+
+
+class SynthesisConfig(BaseModel):
+    """Configuration for dataset synthesis using synthetic-data-kit"""
+
+    # API Configuration (required)
+    gemini_api_key: str  # Gemini API key for synthesis (compulsory)
+
+    # Dataset naming (required)
+    dataset_name: str  # Name for the synthesized dataset (compulsory)
+
+    # Generation parameters
+    num_pairs: Optional[int] = 5  # Number of QA pairs to generate per chunk
+    temperature: Optional[float] = 0.7  # LLM temperature (0.0-1.0)
+    chunk_size: Optional[int] = 4000  # Size of text chunks for processing
+    chunk_overlap: Optional[int] = 200  # Overlap between chunks
+    multimodal: Optional[bool] = False  # Whether to process multimodal data
+
+    # Curation parameters
+    threshold: Optional[float] = 7.0  # Quality threshold for curation (1-10)
+    batch_size: Optional[int] = 5  # Number of items per batch for rating

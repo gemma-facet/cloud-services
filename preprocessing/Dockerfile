@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     wget \
+    git \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv

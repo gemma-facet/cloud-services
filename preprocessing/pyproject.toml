@@ -36,4 +36,4 @@ explicit = true
 torch = [
   { index = "pytorch-cpu" },
 ]
-synthetic-data-kit = { path = "synthetic-data-kit", editable = true }
+synthetic-data-kit = { git = "https://github.com/gemma-facet/synthetic-data-kit.git" }

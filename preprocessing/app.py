@@ -1,6 +1,7 @@
 import os
 import logging
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
+from typing import Optional
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from storage import GCSStorageManager, LocalStorageManager
 from services.dataset_service import DatasetService
@@ -14,7 +15,8 @@ from schema import (
     DatasetsInfoResponse,
     DatasetInfoResponse,
     DatasetDeleteResponse,
-    DatasetSynthesizeResponse,
+    RawDatasetsResponse,
+    SynthesisConfig,
     MIME_TYPES,
 )
 
@@ -139,28 +141,128 @@ async def upload_dataset(
         logger.error(f"Error uploading dataset: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-@app.post("/datasets/synthesize", response_model=DatasetSynthesizeResponse)
-def synthesize_dataset(
-    file: UploadFile = File(...),
+
+@app.get("/datasets/raw", response_model=RawDatasetsResponse)
+def get_raw_datasets(
     current_user_id: str = Depends(get_current_user_id),
 ):
-    """Synthesize a dataset using the dataset synthesizer service"""
+    """
+    Get a list of all raw datasets uploaded by the user.
+    Returns only the dataset ID and filename for each dataset.
+    """
+    try:
+        raw_datasets = dataset_tracker.get_user_raw_datasets(current_user_id)
+        return RawDatasetsResponse(datasets=raw_datasets)
+    except Exception as e:
+        logger.error(f"Error getting raw datasets: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get raw datasets: {str(e)}"
+        )
+
+
+async def parse_synthesis_config(
+    synthesis_config: Optional[str] = Form(None),
+) -> Optional[SynthesisConfig]:
+    if synthesis_config is None:
+        return None
+    try:
+        return SynthesisConfig(**json.loads(synthesis_config))
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid JSON in synthesis_config: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid synthesis_config format: {str(e)}"
+        )
+
+
+@app.post("/datasets/synthesize", response_model=ProcessingResult)
+def synthesize_dataset(
+    file: UploadFile = File(...),
+    synthesis_config: Optional[SynthesisConfig] = Depends(parse_synthesis_config),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """
+    Synthesize a dataset from a raw document file (PDF, DOCX, etc.).
+
+    This endpoint:
+    1. Takes a raw document file (no upload to storage)
+    2. Synthesizes a QA dataset using the dataset synthesizer service
+    3. Uploads the synthesized dataset as a processed dataset
+    4. Tracks it in Firestore like other processed datasets
+
+    Parameters:
+    - file: The document file to synthesize (PDF, DOCX, TXT, etc.)
+    - synthesis_config: SynthesisConfig JSON with synthesis parameters (REQUIRED)
+      - gemini_api_key: Your Gemini API key for synthesis (REQUIRED)
+      - dataset_name: Name for the synthesized dataset (REQUIRED)
+      - num_pairs: Number of QA pairs per chunk (default: 5)
+      - temperature: LLM temperature 0.0-1.0 (default: 0.7)
+      - chunk_size: Text chunk size in characters (default: 4000)
+      - chunk_overlap: Overlap between chunks (default: 200)
+      - threshold: Quality threshold 1-10 (default: 7.0)
+      - batch_size: Batch size for rating (default: 5)
+
+    Example form-data request:
+    - file: <binary file content>
+    - synthesis_config: {"gemini_api_key": "your-api-key-here", "dataset_name": "my-chess-dataset", "num_pairs": 10, "temperature": 0.8, "chunk_size": 5000}
+
+    The synthesized dataset can then be used for training like any other processed dataset.
+    """
     try:
         file_content = file.file.read()
-        filename = file.filename or ""
-        dataset,storage_path = dataset_service.synthesize_dataset(
-            file_data=file_content,
-            filename=filename,
-            metadata={"user_id": current_user_id},
+        filename = file.filename or "unknown_file"
+
+        # Convert SynthesisConfig model to dict, filtering out None values
+        config_dict = None
+        if synthesis_config:
+            config_dict = synthesis_config.model_dump(exclude_none=True)
+
+        # Synthesize and upload the dataset
+        dataset_path, processed_dataset_id, upload_metadata = (
+            dataset_service.synthesize_dataset(
+                file_data=file_content,
+                filename=filename,
+                synthesis_config=config_dict,
             )
-        return {
-            "filename": filename,
-            "gcs_path": storage_path,
+        )
+
+        # Track the synthesized dataset in Firestore as a processed dataset
+        processed_metadata = {
+            "processed_dataset_id": processed_dataset_id,
+            "dataset_name": upload_metadata["dataset_name"],
+            "user_id": current_user_id,
+            "dataset_id": upload_metadata["dataset_id"],
+            "dataset_source": upload_metadata["dataset_source"],
+            "dataset_subset": upload_metadata["dataset_subset"],
+            "created_at": upload_metadata["created_at"],
+            "num_examples": sum(
+                split["num_rows"] for split in upload_metadata["splits"]
+            ),
+            "splits": upload_metadata["splits"],
+            "modality": upload_metadata["modality"],
         }
+        dataset_tracker.track_processed_dataset(processed_metadata)
+
+        # Return response using ProcessingResult model
+        return ProcessingResult(
+            dataset_name=upload_metadata["dataset_name"],
+            dataset_subset=upload_metadata.get("dataset_subset", "default"),
+            dataset_source=upload_metadata.get("dataset_source", "upload"),
+            processed_dataset_id=processed_dataset_id,
+            dataset_id=upload_metadata["dataset_id"],
+            num_examples=processed_metadata["num_examples"],
+            created_at=upload_metadata["created_at"],
+            splits=[split["split_name"] for split in upload_metadata["splits"]],
+            modality=upload_metadata["modality"],
+            full_splits=[],
+        )
 
     except Exception as e:
         logger.error(f"Error synthesizing dataset: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
+
 
 @app.post("/datasets/process", response_model=ProcessingResult)
 def process_dataset(

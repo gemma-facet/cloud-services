@@ -128,8 +128,24 @@ class DatasetLoader:
         if not files:
             raise FileNotFoundError("Uploaded dataset not found")
 
-        file_path = f"{self.storage.base_path}/{files[0]}"
-        filename = file_path.split("_", 1)[1]
+        file_relative_path = files[0]
+        filename = file_relative_path.split("_", 1)[1]
+
+        # Get the local file path
+        if hasattr(self.storage, "base_path"):
+            # Local storage - construct full path
+            file_path = str(self.storage.base_path / file_relative_path)
+        else:
+            # GCS or other remote storage - download to temp location
+            import tempfile
+
+            file_type = filename.split(".")[-1]
+            with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=f".{file_type}", delete=False
+            ) as tmp_file:
+                file_data = self.storage.download_binary_data(file_relative_path)
+                tmp_file.write(file_data)
+                file_path = tmp_file.name
 
         # find the type of file
         file_type = filename.split(".")[-1]
