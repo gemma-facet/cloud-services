@@ -34,8 +34,17 @@ def _ensure_wordnet_available():
             return False
 
 
-# Initialize WordNet availability (only download if needed)
-_wordnet_available = _ensure_wordnet_available()
+# Lazy initialization - only check when actually needed
+_wordnet_available = None
+
+
+def _check_wordnet():
+    """Lazy check for WordNet availability"""
+    global _wordnet_available
+    if _wordnet_available is None:
+        _wordnet_available = _ensure_wordnet_available()
+    return _wordnet_available
+
 
 random.seed(1)
 
@@ -226,7 +235,7 @@ def synonym_replacement(words, n):
 
 def get_synonyms(word):
     """Get synonyms for a word using WordNet, if available"""
-    if not _wordnet_available:
+    if not _check_wordnet():
         return []
 
     synonyms = set()

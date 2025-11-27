@@ -226,6 +226,24 @@ class DatasetService:
                 )
             )
 
+            # Add samples to metadata like process_dataset does
+            modality = upload_metadata.get("modality", "text")
+            for split_info in upload_metadata.get("splits", []):
+                split_name = split_info["split_name"]
+                # Get up to 5 samples from the dataset
+                if split_name in dataset_dict:
+                    samples = (
+                        dataset_dict[split_name]
+                        .select(range(min(5, len(dataset_dict[split_name]))))
+                        .to_list()
+                    )
+                    # Prepare samples for API (handles vision data conversion)
+                    samples = [
+                        self._prepare_sample_for_api(s, modality) for s in samples
+                    ]
+                    samples = [s for s in samples if s is not None]
+                    split_info["samples"] = samples
+
             return dataset_path, processed_dataset_id, upload_metadata
 
         finally:

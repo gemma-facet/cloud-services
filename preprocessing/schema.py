@@ -151,6 +151,15 @@ class DatasetsInfoResponse(BaseModel):
     datasets: List[DatasetInfoSample]
 
 
+class RawDatasetInfo(BaseModel):
+    dataset_id: str
+    filename: str
+
+
+class RawDatasetsResponse(BaseModel):
+    datasets: List[RawDatasetInfo]
+
+
 class DatasetInfoFull(BaseModel):
     dataset_name: str
     dataset_subset: str

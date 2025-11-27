@@ -15,6 +15,7 @@ from schema import (
     DatasetsInfoResponse,
     DatasetInfoResponse,
     DatasetDeleteResponse,
+    RawDatasetsResponse,
     SynthesisConfig,
     MIME_TYPES,
 )
@@ -141,10 +142,45 @@ async def upload_dataset(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+@app.get("/datasets/raw", response_model=RawDatasetsResponse)
+def get_raw_datasets(
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """
+    Get a list of all raw datasets uploaded by the user.
+    Returns only the dataset ID and filename for each dataset.
+    """
+    try:
+        raw_datasets = dataset_tracker.get_user_raw_datasets(current_user_id)
+        return RawDatasetsResponse(datasets=raw_datasets)
+    except Exception as e:
+        logger.error(f"Error getting raw datasets: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get raw datasets: {str(e)}"
+        )
+
+
+async def parse_synthesis_config(
+    synthesis_config: Optional[str] = Form(None),
+) -> Optional[SynthesisConfig]:
+    if synthesis_config is None:
+        return None
+    try:
+        return SynthesisConfig(**json.loads(synthesis_config))
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid JSON in synthesis_config: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid synthesis_config format: {str(e)}"
+        )
+
+
 @app.post("/datasets/synthesize", response_model=ProcessingResult)
 def synthesize_dataset(
     file: UploadFile = File(...),
-    synthesis_config: Optional[SynthesisConfig] = Form(None),
+    synthesis_config: Optional[SynthesisConfig] = Depends(parse_synthesis_config),
     current_user_id: str = Depends(get_current_user_id),
 ):
     """

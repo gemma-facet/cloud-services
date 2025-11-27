@@ -118,6 +118,29 @@ class DatasetTracker:
             self.logger.error(f"Failed to get user processed datasets: {e}")
             return []
 
+    def get_user_raw_datasets(self, user_id: str) -> List[dict]:
+        """
+        Get all raw datasets owned by a user with basic info (id and filename).
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            List of dicts with dataset_id and filename
+        """
+        try:
+            docs = self.raw_collection.where("user_id", "==", user_id).stream()
+            return [
+                {
+                    "dataset_id": doc.id,
+                    "filename": doc.to_dict().get("filename", "unknown"),
+                }
+                for doc in docs
+            ]
+        except Exception as e:
+            self.logger.error(f"Failed to get user raw datasets: {e}")
+            return []
+
     def get_processed_dataset_metadata(
         self, processed_dataset_id: str
     ) -> Optional[dict]:
