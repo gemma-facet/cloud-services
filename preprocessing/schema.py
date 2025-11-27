@@ -2,6 +2,19 @@ from pydantic import BaseModel, model_validator
 from typing import Optional, Dict, List, Any, Literal, Union
 from enum import Enum
 
+MIME_TYPES = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "txt": "text/plain",
+    "csv": "text/csv",
+    "json": "application/json",
+    "jsonl": "application/x-ndjson",
+    "html": "text/html",
+    "parquet": "application/vnd.apache.parquet",
+}
 
 class ProcessingMode(str, Enum):
     """

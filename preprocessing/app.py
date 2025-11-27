@@ -14,6 +14,8 @@ from schema import (
     DatasetsInfoResponse,
     DatasetInfoResponse,
     DatasetDeleteResponse,
+    DatasetSynthesizeResponse,
+    MIME_TYPES,
 )
 
 project_id = os.getenv("PROJECT_ID")
@@ -112,11 +114,13 @@ async def upload_dataset(
     """Upload a dataset file to storage"""
     try:
         file_content = await file.read()
-
+        filename = file.filename or ""
+        filetype = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+        content_type = MIME_TYPES.get(filetype, "application/octet-stream")
         result = dataset_service.upload_dataset(
             file_data=file_content,
             filename=file.filename or "unknown",
-            metadata={"content_type": file.content_type, "user_id": current_user_id},
+            metadata={"content_type": content_type, "user_id": current_user_id},
         )
         # Track raw dataset metadata
         raw_metadata = {
@@ -124,7 +128,7 @@ async def upload_dataset(
             "gcs_path": result.gcs_path,
             "user_id": current_user_id,
             "filename": result.filename,
-            "content_type": file.content_type or "unknown",
+            "content_type": content_type or "unknown",
             "size_bytes": result.size_bytes,
         }
         dataset_tracker.track_raw_dataset(raw_metadata)
@@ -135,6 +139,28 @@ async def upload_dataset(
         logger.error(f"Error uploading dataset: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
+@app.post("/datasets/synthesize", response_model=DatasetSynthesizeResponse)
+def synthesize_dataset(
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Synthesize a dataset using the dataset synthesizer service"""
+    try:
+        file_content = file.file.read()
+        filename = file.filename or ""
+        dataset,storage_path = dataset_service.synthesize_dataset(
+            file_data=file_content,
+            filename=filename,
+            metadata={"user_id": current_user_id},
+            )
+        return {
+            "filename": filename,
+            "gcs_path": storage_path,
+        }
+
+    except Exception as e:
+        logger.error(f"Error synthesizing dataset: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 @app.post("/datasets/process", response_model=ProcessingResult)
 def process_dataset(
