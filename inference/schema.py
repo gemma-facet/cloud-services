@@ -5,7 +5,7 @@ ModelType = Literal["adapter", "merged", "base"]
 
 
 class InferenceRequest(BaseModel):
-    hf_token: str  # HF Token must be provided for Gemma models
+    hf_token: Optional[str] = None  # HF Token (optional, uses HF_TOKEN env var if not provided)
     # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
     model_source: str
     # Type of model: adapter, merged, or base model
@@ -23,7 +23,7 @@ class InferenceResponse(BaseModel):
 
 
 class BatchInferenceRequest(BaseModel):
-    hf_token: str
+    hf_token: Optional[str] = None  # HF Token (optional, uses HF_TOKEN env var if not provided)
     # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
     model_source: str
     # Type of model: adapter, merged, or base model
@@ -58,7 +58,7 @@ MetricType = Literal[
 
 
 class EvaluationRequest(BaseModel):
-    hf_token: str
+    hf_token: Optional[str] = None  # HF Token (optional, uses HF_TOKEN env var if not provided)
     # Storage path or identifier (GCS path, HF Hub repo ID, or local path)
     model_source: str
     # Type of model: adapter, merged, or base model

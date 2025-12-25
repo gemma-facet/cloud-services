@@ -99,13 +99,13 @@ def get_current_user_id(
         )
 
 
-def login_hf(hf_token: Optional[str]):
+def login_hf(hf_token: Optional[str] = None):
     """
     Login to Hugging Face.
-    For now we support env variable for dev but in prod we will just raise an error.
-    Login is required for pushing and pulling models since Gemma3 is a gated model.
+    Uses HF_TOKEN environment variable if no token provided.
+    Login is required for pushing and pulling models since Gemma models are gated.
     """
-    token = hf_token
+    token = hf_token or os.getenv("HF_TOKEN")
     if token:
         login(token=token)
         logging.info("Logged into Hugging Face")

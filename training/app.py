@@ -492,9 +492,10 @@ async def export(
             status_code=400, detail="HF repo ID is required when export is to HF hub"
         )
 
-    if "hf_hub" in request.destination and not request.hf_token:
+    # HF token is optional - server will use HF_TOKEN env var if not provided
+    if "hf_hub" in request.destination and not request.hf_token and not os.getenv("HF_TOKEN"):
         raise HTTPException(
-            status_code=400, detail="HF token is required when export is to HF hub"
+            status_code=400, detail="HF token is required when export is to HF hub (provide in request or set HF_TOKEN env var)"
         )
 
     # Create export document and trigger job
