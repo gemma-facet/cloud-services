@@ -242,15 +242,14 @@ class AugmentationManager:
         if "synthesis" in available_methods:
             synth_settings = config.synthesis_settings or None
             api_key = synth_settings.get("gemini_api_key") if synth_settings else None
-            if api_key:
-                synthesizer = GeminiSynthesizer(
-                    api_key=api_key,
-                    model_name=synth_settings.get(
-                        "gemini_model", "gemini-2.0-flash-001"
-                    )
-                    if synth_settings
-                    else "gemini-2.0-flash-001",
+            synthesizer = GeminiSynthesizer(
+                api_key=api_key,
+                model_name=synth_settings.get(
+                    "gemini_model", "gemini-2.0-flash-001"
                 )
+                if synth_settings
+                else "gemini-2.0-flash-001",
+            )
 
         return TextAugmentationPipeline(
             augmentors=augmentors,

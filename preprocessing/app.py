@@ -20,13 +20,22 @@ from schema import (
     MIME_TYPES,
 )
 
-project_id = os.getenv("PROJECT_ID")
-database_name = os.getenv("FIRESTORE_DB", None)
-dataset_tracker = DatasetTracker(project_id, database_name=database_name)
-
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+project_id = os.getenv("PROJECT_ID")
+database_name = os.getenv("FIRESTORE_DB", None)
+
+# For local testing, allow running without Firestore
+try:
+    dataset_tracker = DatasetTracker(project_id, database_name=database_name)
+    firestore_enabled = True
+    logger.info("Firestore dataset tracker initialized")
+except Exception as e:
+    logger.warning(f"Failed to initialize Firestore dataset tracker: {e}")
+    logger.info("Running in local mode without Firestore tracking")
+    dataset_tracker = None
+    firestore_enabled = False
 
 app = FastAPI(
     title="Gemma Dataset Preprocessing Service",
@@ -133,7 +142,8 @@ async def upload_dataset(
             "content_type": content_type or "unknown",
             "size_bytes": result.size_bytes,
         }
-        dataset_tracker.track_raw_dataset(raw_metadata)
+        if firestore_enabled:
+            dataset_tracker.track_raw_dataset(raw_metadata)
 
         return result
 
@@ -151,6 +161,8 @@ def get_raw_datasets(
     Returns only the dataset ID and filename for each dataset.
     """
     try:
+        if not firestore_enabled:
+            return RawDatasetsResponse(datasets=[])
         raw_datasets = dataset_tracker.get_user_raw_datasets(current_user_id)
         return RawDatasetsResponse(datasets=raw_datasets)
     except Exception as e:
@@ -195,7 +207,7 @@ def synthesize_dataset(
     Parameters:
     - file: The document file to synthesize (PDF, DOCX, TXT, etc.)
     - synthesis_config: SynthesisConfig JSON with synthesis parameters (REQUIRED)
-      - gemini_api_key: Your Gemini API key for synthesis (REQUIRED)
+      - gemini_api_key: Your Gemini API key for synthesis (optional, will use GOOGLE_API_KEY env var if not provided)
       - dataset_name: Name for the synthesized dataset (REQUIRED)
       - num_pairs: Number of QA pairs per chunk (default: 5)
       - temperature: LLM temperature 0.0-1.0 (default: 0.7)
@@ -206,7 +218,7 @@ def synthesize_dataset(
 
     Example form-data request:
     - file: <binary file content>
-    - synthesis_config: {"gemini_api_key": "your-api-key-here", "dataset_name": "my-chess-dataset", "num_pairs": 10, "temperature": 0.8, "chunk_size": 5000}
+    - synthesis_config: {"dataset_name": "my-chess-dataset", "num_pairs": 10, "temperature": 0.8, "chunk_size": 5000}
 
     The synthesized dataset can then be used for training like any other processed dataset.
     """
@@ -243,7 +255,8 @@ def synthesize_dataset(
             "splits": upload_metadata["splits"],
             "modality": upload_metadata["modality"],
         }
-        dataset_tracker.track_processed_dataset(processed_metadata)
+        if firestore_enabled:
+            dataset_tracker.track_processed_dataset(processed_metadata)
 
         # Return response using ProcessingResult model
         return ProcessingResult(
@@ -286,7 +299,7 @@ def process_dataset(
     """
     try:
         # For uploaded datasets, verify ownership of the raw dataset
-        if request.dataset_source == "upload":
+        if request.dataset_source == "upload" and firestore_enabled:
             if not dataset_tracker.verify_raw_dataset_ownership(
                 request.dataset_id, current_user_id
             ):
@@ -318,7 +331,8 @@ def process_dataset(
             "splits": result.full_splits,
             "modality": result.modality,
         }
-        dataset_tracker.track_processed_dataset(processed_metadata)
+        if firestore_enabled:
+            dataset_tracker.track_processed_dataset(processed_metadata)
 
         return result
 
@@ -335,6 +349,8 @@ def get_datasets_info(
     Get information about all the processed datasets owned by the user.
     """
     try:
+        if not firestore_enabled:
+            return DatasetsInfoResponse(datasets=[])
         return dataset_service.get_datasets_info(current_user_id, dataset_tracker)
     except Exception as e:
         logger.error(f"Error getting datasets info: {str(e)}")
@@ -352,6 +368,8 @@ def get_dataset_info(
     Get information about a dataset using its unique processed dataset ID.
     """
     try:
+        if not firestore_enabled:
+            raise HTTPException(status_code=404, detail="Dataset tracking not available in local mode")
         # verify ownership of processed dataset
         if not dataset_tracker.verify_processed_dataset_ownership(
             processed_dataset_id, current_user_id
@@ -375,6 +393,9 @@ def delete_dataset(
     NOTE: This only deletes preprocessed dataset, NOT raw dataset files!
     """
     try:
+        if not firestore_enabled:
+            raise HTTPException(status_code=404, detail="Dataset tracking not available in local mode")
+        
         deleted_resources = []
         total_deleted_files = 0
 
