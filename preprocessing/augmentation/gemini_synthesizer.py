@@ -1,6 +1,6 @@
 import logging
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from google import genai
 
 logger = logging.getLogger(__name__)
@@ -13,18 +13,19 @@ class GeminiSynthesizer:
     Uses the new Google GenAI library.
     """
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash-001"):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash-001"):
+        import os
         self.model_name = model_name
         self.client = None
-        self.api_key = api_key
+        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY")
 
         try:
-            if api_key:
-                # Use provided API key
-                self.client = genai.Client(api_key=api_key)
-                logger.info("Initialized Gemini synthesizer with provided API key")
+            if self.api_key:
+                # Use provided API key or env var
+                self.client = genai.Client(api_key=self.api_key)
+                logger.info("Initialized Gemini synthesizer with API key")
             else:
-                raise ValueError("API key is required")
+                raise ValueError("API key is required (provide via api_key param or GOOGLE_API_KEY env var)")
 
             logger.info(f"Using model: {model_name}")
 
