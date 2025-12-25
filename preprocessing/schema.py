@@ -187,8 +187,8 @@ class DatasetDeleteResponse(BaseModel):
 class SynthesisConfig(BaseModel):
     """Configuration for dataset synthesis using synthetic-data-kit"""
 
-    # API Configuration (required)
-    gemini_api_key: str  # Gemini API key for synthesis (compulsory)
+    # API Configuration (optional - will use GOOGLE_API_KEY env var if not provided)
+    gemini_api_key: Optional[str] = None  # Gemini API key for synthesis (optional, falls back to GOOGLE_API_KEY)
 
     # Dataset naming (required)
     dataset_name: str  # Name for the synthesized dataset (compulsory)

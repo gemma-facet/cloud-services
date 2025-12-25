@@ -381,27 +381,36 @@ def text_similarity_reward(
     reference_values = kwargs.get(config.reference_field, [])
     metric = config.evaluation_metric
     rewards = []
-    for comp, ref in zip(completions, reference_values):
-        score = 0.0
-        completion_text = _get_completion_text(comp)
-        if metric == "cosine":
-            _ensure_genai_configured(config.gemini_api_key)
-            if _genai_client:
-                try:
-                    # Generate embeddings
-                    comp_emb = _genai_client.models.embed_content(
-                        model=config.embedding_model, content=completion_text
-                    )["embeddings"]
-                    ref_emb = _genai_client.models.embed_content(
-                        model=config.embedding_model, content=ref
-                    )["embeddings"]
-                    # Calculate cosine similarity
+    
+    if metric == "cosine":
+        # Use batch embedding for efficiency
+        _ensure_genai_configured(config.gemini_api_key)
+        if _genai_client:
+            try:
+                completion_texts = [_get_completion_text(comp) for comp in completions]
+                all_texts = completion_texts + reference_values
+                # Batch embed all texts
+                batch_response = _genai_client.models.batch_embed_contents(
+                    model=config.embedding_model, contents=all_texts
+                )
+                embeddings = [item["embeddings"] for item in batch_response["embeddings"]]
+                comp_embeddings = embeddings[:len(completion_texts)]
+                ref_embeddings = embeddings[len(completion_texts):]
+                # Calculate cosine similarities
+                for comp_emb, ref_emb in zip(comp_embeddings, ref_embeddings):
                     score = np.dot(comp_emb, ref_emb) / (
                         np.linalg.norm(comp_emb) * np.linalg.norm(ref_emb)
                     )
-                except Exception as e:
-                    logging.error(f"Cosine similarity failed: {e}")
+                    rewards.append(score)
+            except Exception as e:
+                logging.error(f"Batch embedding failed: {e}")
+                rewards = [0.0] * len(completions)
         else:
+            rewards = [0.0] * len(completions)
+    else:
+        for comp, ref in zip(completions, reference_values):
+            score = 0.0
+            completion_text = _get_completion_text(comp)
             comp_tokens, ref_tokens = completion_text.split(), ref.split()
             if metric == "bleu":
                 score = sentence_bleu([ref_tokens], comp_tokens)
@@ -416,7 +425,7 @@ def text_similarity_reward(
                     .fmeasure
                 )
             # We can support other metrics if possible, but for GLEU and cosine are the best
-        rewards.append(score)
+            rewards.append(score)
     return rewards
 
 
