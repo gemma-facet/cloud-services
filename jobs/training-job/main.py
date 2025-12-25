@@ -90,10 +90,13 @@ def main():
         logging.error("Training config not found")
         sys.exit(1)
 
-    if train_request.hf_token:
-        login(token=train_request.hf_token)
+    # Login to Hugging Face using provided token or HF_TOKEN env var
+    hf_token = train_request.hf_token or os.environ.get("HF_TOKEN")
+    if hf_token:
+        login(token=hf_token)
+        logging.info("Logged into Hugging Face")
     else:
-        raise ValueError("Huggingface token is required for training")
+        raise ValueError("Huggingface token is required for training (provide in request or set HF_TOKEN env var)")
 
     project_id = os.environ.get("PROJECT_ID")
     # NOTE: Project ID should always be provided else will fail

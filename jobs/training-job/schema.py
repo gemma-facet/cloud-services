@@ -272,11 +272,10 @@ class TrainingConfig(BaseModel):
         return v
 
 
-# NOTE: This struct is shared between the API and the backend service
 class TrainRequest(BaseModel):
     """Request schema for training job, only TrainingConfig will be accessible in backend"""
 
     processed_dataset_id: str
-    hf_token: str
+    hf_token: Optional[str] = None  # HF Token (optional, uses HF_TOKEN env var if not provided)
     job_name: str = "unnamed job"
     training_config: TrainingConfig
